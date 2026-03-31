@@ -49,6 +49,7 @@ po/*~
 rsconnect/
 
 # Folders
-/Data/
-/Output/
-/Paper/
+01_Data/
+02_Output/
+03_Paper/
+Old/

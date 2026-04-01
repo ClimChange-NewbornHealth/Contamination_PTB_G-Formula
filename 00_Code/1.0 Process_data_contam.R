@@ -33,4 +33,4 @@ cont <- cont |>
 summary(cont)
 
 # Save data 
-save(cont, file = paste0(data_inp, "Contamination_2009_2020_series.RData"))
+save(cont, file = paste0(data_out, "Contamination_2009_2020_series.RData"))

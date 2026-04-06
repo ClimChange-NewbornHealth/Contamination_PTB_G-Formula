@@ -140,6 +140,7 @@ births <- births |>
   } 
 
 nrow(births) # 858938
+summary(births)
 
 births <- births |>     
   mutate(id=1:n()) |> 
@@ -189,7 +190,7 @@ births <- births |>
 births <- births |>
   filter(weeks >= 28)  %>% 
     {
-      cat("Observaciones después de filter:", nrow(.), "\nMissing:", start_count - nrow(.), "\n") # NA: 4127
+      cat("Observaciones después de filter:", nrow(.), "\nMissing:", start_count - nrow(.), "\n") # NA: 4127 (alta pérdida)
       start_count <<- nrow(.)  # Actualiza el contador de filas
       .  # Retorna el dataset para la siguiente operación
     } 
@@ -317,7 +318,7 @@ missing <- births |>
 # Total missing: 
 sum(missing$loss_data) # 141
 
-write.xlsx(missing, "Data/Output/Data_exclussion_weeks_tbw-USA.xlsx")
+write.xlsx(missing, "01_Data/Output/Data_exclussion_weeks_tbw-USA.xlsx")
 
 # Chile criteria: remove 0.1% extreme values 
 # Save data for sensivity analysis 
@@ -340,7 +341,7 @@ sum(missing2$loss_data) # 7151
 write.xlsx(missing2, "01_Data/Output/Data_exclussion_weeks_tbw-1percent.xlsx")
 
 # Apply USA criteria 
-# Init sample 835087
+# Init sample 818336
 births <- births |>
   filter(
     case_when(
@@ -358,7 +359,7 @@ births <- births |>
       TRUE ~ FALSE  
     )
   )
-# End sample 834917
+# End sample 818195
 nrow(births)
 
 ### 7. Outcome: preterm (834917) ---- 
@@ -399,8 +400,11 @@ births <- births |>
   mutate(birth_term = if_else(weeks >= 37 & weeks <42, 1, 0)) |> 
   mutate(birth_posterm = if_else(weeks >= 42, 1, 0)) 
 
+glimpse(births) # 818195
+summary(births)
+
 ### 8.  Fixed cohort Bias ----
-# N=834917
+# N=818195
 
 date_last_week <- as.Date("2020-12-31") - weeks(42) # 42 weeks
 date_last_week
@@ -410,8 +414,9 @@ births <- births |>
 nrow(births)
 # N=759577
 
-births <- births |> 
-  filter(date_ends_week_gest <= date_last_week)
+# Validar con estela 713918
+#births <- births |> 
+#  filter(date_ends_week_gest <= date_last_week)
 
 # N=713918
 nrow(births)
@@ -422,8 +427,20 @@ births <- births |>
   mutate(covid = if_else(date_ends_week_gest > as.Date("2020-03-01"), 1, 0)) |> 
   relocate(covid, .before = birth_preterm)
 
+tab_mun <- births |> 
+  group_by(com, name_com) |> 
+  summarise(
+    n_births = n(),
+    ptb = mean(birth_preterm, na.rm = TRUE)
+  ) |> 
+  ungroup()
+
+glimpse(tab_mun)
+
+write.xlsx(tab_mun, "01_Data/Output/Data_births_ptb_mun.xlsx")
+
 ### 7.  Save new births data ----
-glimpse(births)
+glimpse(births) # 759577
 save(births, file=paste0(data_out, "births_2010_2020", ".RData"))
 
 

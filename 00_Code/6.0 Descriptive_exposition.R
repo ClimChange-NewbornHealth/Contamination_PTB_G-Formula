@@ -286,3 +286,195 @@ plots_idw <- build_hist_panel(exposure, "IDW")
 
 ## Histograms with intervention by municipality ----
 
+build_hist_facet_municipality <- function(df, pollutant = c("PM2.5", "NO2", "O3"), method = c("KRG", "IDW")) {
+  pollutant <- match.arg(pollutant)
+  method <- match.arg(method)
+
+  col_map <- list(
+    KRG = c("PM2.5" = "pm25_ok_pred", "NO2" = "no2_ok_pred", "O3" = "o3_ok_pred"),
+    IDW = c("PM2.5" = "pm25_idw_pred", "NO2" = "no2_idw_pred", "O3" = "o3_idw_pred")
+  )
+
+  season_target <- ifelse(pollutant == "O3", "Summer", "Winter")
+  pollutant_col <- col_map[[method]][[pollutant]]
+
+  comuna_levels <- df |>
+    distinct(com, name_com) |>
+    arrange(com) |>
+    pull(name_com)
+
+  cont_data_aux <- df |>
+    transmute(
+      com = com,
+      name_com = factor(name_com, levels = comuna_levels),
+      season = season,
+      value = .data[[pollutant_col]]
+    ) |>
+    filter(!is.na(value))
+
+  dat_overall <- cont_data_aux |>
+    mutate(season_plot = "Overall")
+
+  dat_season <- cont_data_aux |>
+    filter(season == season_target) |>
+    mutate(season_plot = season_target)
+
+  plot_data <- bind_rows(dat_overall, dat_season) |>
+    mutate(season_plot = factor(season_plot, levels = c("Overall", season_target)))
+
+  season_col <- switch(
+    pollutant,
+    "PM2.5" = "#F4A261",
+    "NO2" = "#8E7CC3",
+    "O3" = "#2A9D8F"
+  )
+  cols <- c("Overall" = "#BDBDBD", stats::setNames(season_col, season_target))
+
+  thr <- switch(
+    pollutant,
+    "PM2.5" = tibble::tribble(
+      ~x, ~type,
+      50, "Chile guideline (50 µg/m³)",
+      15, "WHO guideline (15 µg/m³)"
+    ),
+    "NO2" = tibble::tribble(
+      ~x, ~type,
+      53, "Chile guideline (53 ppbv)",
+      13, "WHO guideline (13 ppbv)"
+    ),
+    "O3" = tibble::tribble(
+      ~x, ~type,
+      61, "Chile guideline (61 ppbv)",
+      51, "WHO guideline (51 ppbv)"
+    )
+  )
+
+  x_lab <- if (pollutant == "PM2.5") {
+    expression("Concentration (" * mu * "g/" * m^3 * ")")
+  } else {
+    "Concentration (ppbv)"
+  }
+
+  p <- ggplot(plot_data, aes(x = value, fill = season_plot, color = season_plot)) +
+    geom_histogram(position = "identity", alpha = 0.35, binwidth = 0.5) +
+    scale_fill_manual(values = cols, name = NULL, breaks = c("Overall", season_target)) +
+    scale_color_manual(values = cols, name = NULL, breaks = c("Overall", season_target)) +
+    labs(
+      x = x_lab,
+      y = "Frequency"
+    ) +
+    geom_vline(data = thr, aes(xintercept = x, linetype = type), linewidth = 0.5, color = "black") +
+    scale_linetype_manual(
+      values = setNames(
+        c("longdash", "dotdash"),
+        c(thr$type[[1]], thr$type[[2]])
+      ),
+      breaks = c(thr$type[[2]], thr$type[[1]]),
+      name = NULL
+    ) +
+    guides(
+      fill = guide_legend(order = 1),
+      color = guide_legend(order = 1),
+      linetype = guide_legend(order = 2)
+    ) +
+    facet_wrap(~name_com, scales = "free", ncol = 5) +
+    scale_x_continuous(labels = scales::label_number(decimal.mark = ".", big.mark = "")) +
+    theme_light() +
+    theme(
+      strip.background = element_rect(fill = "white", color = "black"),
+      strip.text = element_text(color = "black"),
+      panel.grid = element_blank(),
+      legend.position = "top",
+      legend.title = element_text(),
+      legend.box = "horizontal",
+      legend.spacing.x = unit(0.3, "cm"),
+      legend.spacing.y = unit(0, "cm"),
+      legend.margin = margin(t = 0, r = 0, b = 0, l = 0)
+    )
+
+  out_file <- paste0(
+    data_out,
+    "Histogram_FACET_",
+    gsub("\\.", "", pollutant),
+    "_",
+    method,
+    ".png"
+  )
+
+  ggsave(
+    filename = out_file,
+    plot = p,
+    res = 300,
+    width = 20,
+    height = 25,
+    units = "cm",
+    scaling = 0.7,
+    bg = "white",
+    device = ragg::agg_png
+  )
+
+  invisible(p)
+}
+
+facet_pm_krg <- build_hist_facet_municipality(exposure, pollutant = "PM2.5", method = "KRG")
+facet_pm_idw <- build_hist_facet_municipality(exposure, pollutant = "PM2.5", method = "IDW")
+facet_no2_krg <- build_hist_facet_municipality(exposure, pollutant = "NO2", method = "KRG")
+facet_no2_idw <- build_hist_facet_municipality(exposure, pollutant = "NO2", method = "IDW")
+facet_o3_krg <- build_hist_facet_municipality(exposure, pollutant = "O3", method = "KRG")
+facet_o3_idw <- build_hist_facet_municipality(exposure, pollutant = "O3", method = "IDW")
+
+## Annual-season summary table (Summer/Winter): mean, min and max by pollutant and estimator ----
+
+annual_summary_long <- exposure |>
+  mutate(
+    year = lubridate::year(date),
+    season = factor(season, levels = c("Summer", "Winter"))
+  ) |>
+  filter(season %in% c("Summer", "Winter")) |>
+  group_by(year, season) |>
+  summarise(
+    pm25_krg_mean = mean(pm25_ok_pred, na.rm = TRUE),
+    pm25_krg_min = min(pm25_ok_pred, na.rm = TRUE),
+    pm25_krg_max = max(pm25_ok_pred, na.rm = TRUE),
+    pm25_idw_mean = mean(pm25_idw_pred, na.rm = TRUE),
+    pm25_idw_min = min(pm25_idw_pred, na.rm = TRUE),
+    pm25_idw_max = max(pm25_idw_pred, na.rm = TRUE),
+    no2_krg_mean = mean(no2_ok_pred, na.rm = TRUE),
+    no2_krg_min = min(no2_ok_pred, na.rm = TRUE),
+    no2_krg_max = max(no2_ok_pred, na.rm = TRUE),
+    no2_idw_mean = mean(no2_idw_pred, na.rm = TRUE),
+    no2_idw_min = min(no2_idw_pred, na.rm = TRUE),
+    no2_idw_max = max(no2_idw_pred, na.rm = TRUE),
+    o3_krg_mean = mean(o3_ok_pred, na.rm = TRUE),
+    o3_krg_min = min(o3_ok_pred, na.rm = TRUE),
+    o3_krg_max = max(o3_ok_pred, na.rm = TRUE),
+    o3_idw_mean = mean(o3_idw_pred, na.rm = TRUE),
+    o3_idw_min = min(o3_idw_pred, na.rm = TRUE),
+    o3_idw_max = max(o3_idw_pred, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  pivot_longer(
+    cols = -c(year, season),
+    names_to = c("pollutant", "estimator", "stat"),
+    names_pattern = "(pm25|no2|o3)_(krg|idw)_(mean|min|max)",
+    values_to = "value"
+  ) |>
+  mutate(
+    pollutant = recode(pollutant, pm25 = "PM2.5", no2 = "NO2", o3 = "O3"),
+    estimator = recode(estimator, krg = "Kriging", idw = "IDW"),
+    stat = recode(stat, mean = "Mean", min = "Min", max = "Max")
+  ) |>
+  pivot_wider(names_from = stat, values_from = value) |>
+  arrange(year, season, pollutant, estimator) |>
+  mutate(
+    across(
+      c(Mean, Min, Max),
+      ~ formatC(round(.x, 2), format = "f", digits = 2, decimal.mark = ".")
+    )
+  )
+
+writexl::write_xlsx(
+  list(annual_summary_long = annual_summary_long),
+  path = paste0(data_out, "Table_Annual_Summary_Contaminants_Estimators.xlsx")
+)
+

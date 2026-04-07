@@ -1,4 +1,5 @@
 """
+3-0 Extract NDVI data 
 Extract NDVI (MODIS MOD13Q1, ~16-day composites) per district geometry.
 Builds a daily calendar from 2010-01-01 through 2020-12-31; days without
 a composite are NA.

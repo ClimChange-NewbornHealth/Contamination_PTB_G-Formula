@@ -1,4 +1,4 @@
-# Code 3: Temp data and NDVI ----
+# Code 3.1: Temp data and NDVI ----
 
 rm(list=ls())
 ## Settings ----

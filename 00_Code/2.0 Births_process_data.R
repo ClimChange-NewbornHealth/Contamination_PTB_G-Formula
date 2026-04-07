@@ -414,7 +414,7 @@ births <- births |>
 nrow(births)
 # N=759577
 
-# Validar con estela 713918
+# Validar con estela 713918 
 #births <- births |> 
 #  filter(date_ends_week_gest <= date_last_week)
 

@@ -70,5 +70,6 @@ install_load(c("rio",
                "graphPAF",
                "scales",
                'splitstackshape',
-               'svMisc'
+               'svMisc',
+               "imputeTS"
                ))

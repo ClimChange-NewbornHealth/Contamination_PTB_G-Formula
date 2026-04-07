@@ -6,7 +6,7 @@ source("00_Code/0.2 Packages.R")
 source("00_Code/0.3 Functions.R")
 
 # Data path 
-data_inp <- "01_Data/Input/Contant_series/"
+data_inp <- "01_Data/Input/Clime_series/"
 data_out <- "01_Data/Output/"
 
 ## Contamination Data ---- 
@@ -33,4 +33,4 @@ cont <- cont |>
 summary(cont)
 
 # Save data 
-save(cont, file = paste0(data_out, "Contamination_2009_2020_series.RData"))
+save(cont, file = paste0(data_out, "Contamination_2010_2020_series.RData"))

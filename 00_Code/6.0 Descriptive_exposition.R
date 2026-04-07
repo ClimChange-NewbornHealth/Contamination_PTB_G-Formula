@@ -478,3 +478,80 @@ writexl::write_xlsx(
   path = paste0(data_out, "Table_Annual_Summary_Contaminants_Estimators.xlsx")
 )
 
+## Time distribution plots (daily mean across municipalities) ----
+
+cont_data_mean <- exposure |>
+  group_by(date) |>
+  summarise(
+    pm25_krg = mean(pm25_ok_pred, na.rm = TRUE),
+    pm25_idw = mean(pm25_idw_pred, na.rm = TRUE),
+    no2_krg = mean(no2_ok_pred, na.rm = TRUE),
+    no2_idw = mean(no2_idw_pred, na.rm = TRUE),
+    o3_krg = mean(o3_ok_pred, na.rm = TRUE),
+    o3_idw = mean(o3_idw_pred, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+lab_ugm3 <- expression("Concentration (" * mu * "g/" * m^3 * ")")
+lab_ppb <- "Concentration (ppbv)"
+
+gvars <- list(
+  list(name = "pm25_krg", var = "pm25_krg", title_expr = expression("A. PM"[2.5] * " - Kriging")),
+  list(name = "pm25_idw", var = "pm25_idw", title_expr = expression("B. PM"[2.5] * " - IDW")),
+  list(name = "no2_krg", var = "no2_krg", title_expr = expression("C. NO"[2] * " - Kriging")),
+  list(name = "no2_idw", var = "no2_idw", title_expr = expression("D. NO"[2] * " - IDW")),
+  list(name = "o3_krg", var = "o3_krg", title_expr = expression("E. O"[3] * " - Kriging")),
+  list(name = "o3_idw", var = "o3_idw", title_expr = expression("F. O"[3] * " - IDW"))
+)
+
+plots_time <- list()
+
+for (i in seq_along(gvars)) {
+  v <- gvars[[i]]
+  ylab <- if (startsWith(v$var, "o3") || startsWith(v$var, "no2")) lab_ppb else lab_ugm3
+
+  p <- ggplot(cont_data_mean, aes(x = date, y = .data[[v$var]])) +
+    geom_point(size = 0.5, alpha = 0.1) +
+    geom_smooth(method = "loess", span = 0.05, se = TRUE, linewidth = 0.6, color = "#2F6DF6") +
+    labs(title = v$title_expr, x = NULL, y = ylab) +
+    scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+    theme_light() +
+    theme(
+      plot.title = element_text(),
+      panel.grid = element_blank(),
+      strip.background = element_rect(fill = "white"),
+      strip.text = element_text(size = 11, color = "black", hjust = 0),
+      axis.text.y = element_text(size = 9),
+      axis.ticks.y = element_blank(),
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 8)
+    )
+
+  plots_time[[i]] <- p
+  names(plots_time)[i] <- v$name
+}
+
+fig_time_final <- ggpubr::ggarrange(
+  plots_time[[1]],
+  plots_time[[2]],
+  plots_time[[3]],
+  plots_time[[4]],
+  plots_time[[5]],
+  plots_time[[6]],
+  ncol = 2,
+  nrow = 3,
+  align = "hv"
+)
+
+ggsave(
+  filename = paste0(data_out, "Time_distribution_pm25_no2_o3.png"),
+  plot = fig_time_final,
+  res = 300,
+  width = 20,
+  height = 22,
+  units = "cm",
+  scaling = 0.9,
+  bg = "white",
+  device = ragg::agg_png
+)
+
+

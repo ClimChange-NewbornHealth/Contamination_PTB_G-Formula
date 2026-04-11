@@ -49,6 +49,9 @@ po/*~
 rsconnect/
 
 # Folders
-01_Data/
+01_Data/Input/
+01_Data/Output/*
+!01_Data/Output/births_2010_2020.RData
+!01_Data/Output/Contamination_Climate_Data_2010_2020.RData
 03_Paper/
 00_Code/old_code/

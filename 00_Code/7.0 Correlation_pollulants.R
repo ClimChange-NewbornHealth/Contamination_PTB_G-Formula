@@ -211,8 +211,7 @@ corr_vars_krg <- exposure |>
     O3 = o3_ok_pred,
     TMAX = tmax,
     TMIN = tmin,
-    TAD = TAD,
-    NDVI = ndvi
+    TAD = TAD
   )
 
 corr_vars_idw <- exposure |>
@@ -222,8 +221,7 @@ corr_vars_idw <- exposure |>
     O3 = o3_idw_pred,
     TMAX = tmax,
     TMIN = tmin,
-    TAD = TAD,
-    NDVI = ndvi
+    TAD = TAD
   )
 
 panel_krg <- metan::corr_plot(

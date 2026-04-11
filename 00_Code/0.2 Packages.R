@@ -71,5 +71,6 @@ install_load(c("rio",
                "scales",
                'splitstackshape',
                'svMisc',
-               "imputeTS"
+               "imputeTS",
+               "meta"
                ))

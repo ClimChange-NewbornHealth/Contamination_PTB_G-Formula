@@ -478,6 +478,61 @@ writexl::write_xlsx(
   path = paste0(data_out, "Table_Annual_Summary_Contaminants_Estimators.xlsx")
 )
 
+## Annual-season summary table (Summer/Winter) by municipality ----
+
+mun_summary_long <- exposure |>
+  mutate(
+    season = factor(season, levels = c("Summer", "Winter"))
+  ) |>
+  filter(season %in% c("Summer", "Winter")) |>
+  group_by(com, name_com, season) |>
+  summarise(
+    pm25_krg_mean = mean(pm25_ok_pred, na.rm = TRUE),
+    pm25_krg_min = min(pm25_ok_pred, na.rm = TRUE),
+    pm25_krg_max = max(pm25_ok_pred, na.rm = TRUE),
+    pm25_idw_mean = mean(pm25_idw_pred, na.rm = TRUE),
+    pm25_idw_min = min(pm25_idw_pred, na.rm = TRUE),
+    pm25_idw_max = max(pm25_idw_pred, na.rm = TRUE),
+    no2_krg_mean = mean(no2_ok_pred, na.rm = TRUE),
+    no2_krg_min = min(no2_ok_pred, na.rm = TRUE),
+    no2_krg_max = max(no2_ok_pred, na.rm = TRUE),
+    no2_idw_mean = mean(no2_idw_pred, na.rm = TRUE),
+    no2_idw_min = min(no2_idw_pred, na.rm = TRUE),
+    no2_idw_max = max(no2_idw_pred, na.rm = TRUE),
+    o3_krg_mean = mean(o3_ok_pred, na.rm = TRUE),
+    o3_krg_min = min(o3_ok_pred, na.rm = TRUE),
+    o3_krg_max = max(o3_ok_pred, na.rm = TRUE),
+    o3_idw_mean = mean(o3_idw_pred, na.rm = TRUE),
+    o3_idw_min = min(o3_idw_pred, na.rm = TRUE),
+    o3_idw_max = max(o3_idw_pred, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  pivot_longer(
+    cols = -c(com, name_com, season),
+    names_to = c("pollutant", "estimator", "stat"),
+    names_pattern = "(pm25|no2|o3)_(krg|idw)_(mean|min|max)",
+    values_to = "value"
+  ) |>
+  mutate(
+    pollutant = recode(pollutant, pm25 = "PM2.5", no2 = "NO2", o3 = "O3"),
+    estimator = recode(estimator, krg = "Kriging", idw = "IDW"),
+    stat = recode(stat, mean = "Mean", min = "Min", max = "Max")
+  ) |>
+  pivot_wider(names_from = stat, values_from = value) |>
+  arrange(com, name_com, season, pollutant, desc(estimator)) |>
+  mutate(
+    across(
+      c(Mean, Min, Max),
+      ~ formatC(round(.x, 2), format = "f", digits = 2, decimal.mark = ".")
+    )
+  )
+
+writexl::write_xlsx(
+  list(mun_summary_long = mun_summary_long),
+  path = paste0(data_out, "Table_Municipality_Summary_Contaminants_Estimators.xlsx")
+)
+
+
 ## Time distribution plots (daily mean across municipalities) ----
 
 cont_data_mean <- exposure |>

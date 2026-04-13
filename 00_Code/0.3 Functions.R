@@ -174,6 +174,42 @@ load_and_extract_df <- function(file_path) {
   return(df)
 }
 
+# Row-wise mean exposure in gestation week window (for chunked parallel pipeline)
+calculate_gest_window_means <- function(row, cont_data) {
+  setDT(row)
+  setDT(cont_data)
+  row_copy <- copy(row)
+  s <- as.Date(row_copy$date_start_week_gest[1])
+  e <- as.Date(row_copy$date_ends_week_gest[1])
+  nm <- row_copy$name_com[1]
+  w <- cont_data[date >= s & date <= e & name_com == nm]
+  if (nrow(w) == 0) {
+    row_copy[, `:=`(
+      pm25_krg = NA_real_, o3_krg = NA_real_, no2_krg = NA_real_,
+      pm25_idw = NA_real_, o3_idw = NA_real_, no2_idw = NA_real_,
+      tad = NA_real_, ndvi = NA_real_
+    )]
+  } else {
+    row_copy[, `:=`(
+      pm25_krg = round(mean(as.numeric(w$pm25_krg), na.rm = TRUE), 3),
+      o3_krg = round(mean(as.numeric(w$o3_krg), na.rm = TRUE), 3),
+      no2_krg = round(mean(as.numeric(w$no2_krg), na.rm = TRUE), 3),
+      pm25_idw = round(mean(as.numeric(w$pm25_idw), na.rm = TRUE), 3),
+      o3_idw = round(mean(as.numeric(w$o3_idw), na.rm = TRUE), 3),
+      no2_idw = round(mean(as.numeric(w$no2_idw), na.rm = TRUE), 3),
+      tad = round(mean(as.numeric(w$TAD), na.rm = TRUE), 3),
+      ndvi = round(mean(as.numeric(w$ndvi), na.rm = TRUE), 3)
+    )]
+  }
+  row_copy
+}
+
+combine_processed_parts <- function(output_directory) {
+  files <- list.files(output_directory, pattern = "_processed\\.RData$", full.names = TRUE)
+  dfs <- lapply(files, load_and_extract_df)
+  data.table::rbindlist(dfs, fill = TRUE)
+}
+
 
 # Calculate contamination metrics (version 2: observerd metrics )
 

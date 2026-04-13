@@ -8,3 +8,8 @@ source("00_Code/0.3 Functions.R")
 
 data_inp <- "01_Data/Output/"
 data_out <- "01_Data/Output/"
+
+## Load data ----
+
+births_weeks <- rio::import(paste0(data_inp, "births_2010_2020_exposure_weeks.RData"))
+glimpse(births_weeks)

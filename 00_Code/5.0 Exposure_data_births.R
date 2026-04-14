@@ -49,10 +49,10 @@ table(t1$test)
 save(births_weeks, file=paste0(data_out, "births_2010_2020_weeks_long", ".RData"))
 
 bw_data <- births_weeks |>
-  select(id, com, name_com, date_nac, weeks, week_gest_num, date_start_week_gest, date_ends_week_gest)
+  select(id, com, name_com, date_nac, weeks, week_gest_num, date_start_week, date_end_week)
 
 glimpse(bw_data)
-rm(births, births_weeks, t1)
+rm(births_weeks, t1)
 
 ## Pollution data -----
 
@@ -187,22 +187,13 @@ parts_out_gest <- file.path(data_out, "temp_exposure_gest_means_proc")
 parts_out_period <- file.path(data_out, "temp_exposure_period_metrics_proc")
 
 num_parts <- 50L
+#test <- sample(unique(bw_data$id), size = 500L)
+#test <- bw_data |> filter(id %in% test)
+#parts(test, path = data_out, folder = "temp_exposure_bw_parts", num_parts = num_parts)
 parts(bw_data, path = data_out, folder = "temp_exposure_bw_parts", num_parts = num_parts)
 
 parallel::detectCores()
 plan(multisession, workers = parallel::detectCores() - 4)
-
-tic()
-process_files_parallel(
-  input_directory = parts_in_dir,
-  output_directory = parts_out_period,
-  cont_data = cont_tibble,
-  calc_func = calculate_period_metrics_row
-)
-bw_period_metrics_expo <- combine_processed_parts(parts_out_period)
-if ("I" %in% names(bw_period_metrics_expo)) bw_period_metrics_expo[, I := NULL]
-toc()
-beepr::beep(8)
 
 tic()
 process_files_parallel(
@@ -214,7 +205,26 @@ process_files_parallel(
 bw_gest_window_expo <- combine_processed_parts(parts_out_gest)
 if ("I" %in% names(bw_gest_window_expo)) bw_gest_window_expo[, I := NULL]
 toc()
-beepr::beep(8)
+beepr::beep(8) ## ~84 min
+
+parallel::detectCores()
+plan(multisession, workers = parallel::detectCores() - 4)
+
+#test <- sample(unique(births$id), size = 500L)
+#test <- births |> filter(id %in% test)
+#parts(test, path = data_out, folder = "temp_exposure_bw_parts", num_parts = num_parts)
+parts(births, path = data_out, folder = "temp_exposure_bw_parts", num_parts = num_parts)
+tic()
+process_files_parallel(
+  input_directory = parts_in_dir,
+  output_directory = parts_out_period,
+  cont_data = cont_tibble,
+  calc_func = calculate_period_metrics_row
+)
+bw_period_metrics_expo <- combine_processed_parts(parts_out_period)
+if ("I" %in% names(bw_period_metrics_expo)) bw_period_metrics_expo[, I := NULL]
+toc()
+beepr::beep(8) # ~ 180 min 
 
 glimpse(bw_gest_window_expo)
 glimpse(bw_period_metrics_expo)

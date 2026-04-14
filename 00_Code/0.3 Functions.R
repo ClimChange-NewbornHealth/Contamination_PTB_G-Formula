@@ -179,8 +179,8 @@ calculate_gest_window_means <- function(row, cont_data) {
   setDT(row)
   setDT(cont_data)
   row_copy <- copy(row)
-  s <- as.Date(row_copy$date_start_week_gest[1])
-  e <- as.Date(row_copy$date_ends_week_gest[1])
+  s <- as.Date(row_copy$date_start_week[1])
+  e <- as.Date(row_copy$date_end_week[1])
   nm <- row_copy$name_com[1]
   w <- cont_data[date >= s & date <= e & name_com == nm]
   if (nrow(w) == 0) {

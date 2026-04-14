@@ -70,9 +70,12 @@ save(births_exposure, file=paste0(data_out, "births_2010_2020_exposure", ".RData
 week_exposure <- week_exposure |> 
   select(-c("name_com", "weeks", "date_nac")) 
 
-births_exposure_weeks <- births |> 
-  left_join(sovi, by = "com") |> 
-  left_join(week_exposure, by=c("id", "com", "date_start_week_gest", "date_ends_week_gest"), multiple = "all") 
+births <- births |> 
+  left_join(sovi, by = "com")
+
+births_exposure_weeks <- week_exposure |> 
+  left_join(births, by=c("id", "com"), multiple = "all") |> 
+  relocate(week_gest_num:ndvi, .after = vulnerability)
 
 glimpse(births_exposure_weeks)
 summary(births_exposure_weeks)

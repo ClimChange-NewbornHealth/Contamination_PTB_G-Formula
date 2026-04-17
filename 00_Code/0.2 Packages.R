@@ -72,5 +72,6 @@ install_load(c("rio",
                'splitstackshape',
                'svMisc',
                "imputeTS",
-               "meta"
+               "meta",
+               "ggtext"
                ))

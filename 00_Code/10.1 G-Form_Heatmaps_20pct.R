@@ -1,4 +1,4 @@
-# 10. G-Formula -----
+# 10.1 G-Form Heatmaps 20% Intervention ----
 
 rm(list = ls())
 
@@ -11,4 +11,4 @@ data_inp <- "01_Data/Output/"
 data_out <- "02_Output/Descriptives/"
 data_out_g <- "02_Output/G-Form/"
 
-## Load data ----
+## Load data models ----

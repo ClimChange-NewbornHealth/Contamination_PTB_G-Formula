@@ -148,17 +148,16 @@ rm(births_weeks, g_expo_krg, g_expo_idw)
 
 ## Cox models (kriging only) ----
 
-births <- rio::import(paste0(data_inp, "births_exposure_period_metrics_full_d30_d4_tri.RData")) |> 
-  select(id, tad_full, ndvi_full) |> 
-  distinct(id, .keep_all = TRUE)
-glimpse(births)
+births <- rio::import(paste0(data_inp, "births_exposure_period_metrics_full_d30_d4_tri.RData")) |>
+  dplyr::select(id, ndvi_full) |>
+  dplyr::distinct(id, .keep_all = TRUE)
 
 load(paste0(data_inp, "births_2010_2020_exposure_weeks_lagged.RData"))
 
-data_long <- data_long |> 
-  left_join(births, by = "id") |> 
+data_long <- data_long |>
+  dplyr::left_join(births, by = "id") |>
   mutate(
-    month_week1 = factor(month_week1), 
+    month_week1 = factor(month_week1),
     year_week1 = factor(year_week1),
     covid = factor(covid)
   )
@@ -167,7 +166,7 @@ control_vars <- c(
   "sex", "age_group_mom", "educ_group_mom", "job_group_mom",
   "age_group_dad", "educ_group_dad", "job_group_dad",
   "month_week1", "year_week1", "covid", "vulnerability", 
-  "tad_full", "ndvi_full"
+  "ndvi_full"
 )
 
 dependent_var <- "birth_preterm"
@@ -192,6 +191,19 @@ build_wide_pollutant <- function(df, pollutant, weeks_keep = 1:37) {
   wide_one
 }
 
+# TAD por semana (misma semana w que exposición y lag ponderado).
+# NDVI semanal (opcional): descomentar wide_ndvi, full_join y ndvi_var en el predictor.
+build_wide_weekly_var <- function(df, varname, weeks_keep = 1:37) {
+  df |>
+    dplyr::select(id, week_gest_num, dplyr::all_of(varname)) |>
+    dplyr::filter(week_gest_num %in% weeks_keep) |>
+    tidyr::pivot_wider(
+      names_from = week_gest_num,
+      values_from = dplyr::all_of(varname),
+      names_glue = "{.value}_{week_gest_num}"
+    )
+}
+
 # Build modeling base (one row per id)
 base_vars <- c("id", "weeks", dependent_var, control_vars)
 data_base <- data_long |>
@@ -199,6 +211,11 @@ data_base <- data_long |>
   dplyr::distinct(id, .keep_all = TRUE) 
 
 glimpse(data_base)
+
+wide_tad <- build_wide_weekly_var(data_long, "tad", weeks_keep = weeks_analysis)
+# wide_ndvi <- build_wide_weekly_var(data_long, "ndvi", weeks_keep = weeks_analysis)
+# wide_climate <- dplyr::full_join(wide_tad, wide_ndvi, by = "id")
+wide_climate <- wide_tad
 
 ### Kriging analysis ----
 
@@ -218,6 +235,7 @@ for (contam in krg_contaminants) {
   
   data_model <- data_base |>
     dplyr::left_join(wide_contam, by = "id") |>
+    dplyr::left_join(wide_climate, by = "id") |>
     dplyr::mutate(tstart = 28)
   
   results_cox[[contam]] <- data.frame()
@@ -225,9 +243,13 @@ for (contam in krg_contaminants) {
   for (w in weeks_analysis) {
     exp_var <- paste0("exposicion_", w)
     lag_var <- paste0("exposicion_lagged_", w)
+    tad_var <- paste0("tad_", w)
+    # ndvi_var <- paste0("ndvi_", w)
     predictor_terms <- c(
       exp_var,
-      lag_var[lag_var %in% paste0("exposicion_lagged_", lag_weeks)]
+      lag_var[lag_var %in% paste0("exposicion_lagged_", lag_weeks)],
+      tad_var
+      # , ndvi_var
     )
     predictor <- paste(predictor_terms, collapse = " + ")
     
@@ -319,6 +341,7 @@ for (contam in idw_contaminants) {
   
   data_model <- data_base |>
     dplyr::left_join(wide_contam, by = "id") |>
+    dplyr::left_join(wide_climate, by = "id") |>
     dplyr::mutate(tstart = 28)
   
   results_cox[[contam]] <- data.frame()
@@ -326,9 +349,13 @@ for (contam in idw_contaminants) {
   for (w in weeks_analysis) {
     exp_var <- paste0("exposicion_", w)
     lag_var <- paste0("exposicion_lagged_", w)
+    tad_var <- paste0("tad_", w)
+    # ndvi_var <- paste0("ndvi_", w)
     predictor_terms <- c(
       exp_var,
-      lag_var[lag_var %in% paste0("exposicion_lagged_", lag_weeks)]
+      lag_var[lag_var %in% paste0("exposicion_lagged_", lag_weeks)],
+      tad_var
+      # , ndvi_var
     )
     predictor <- paste(predictor_terms, collapse = " + ")
     

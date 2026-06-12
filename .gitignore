@@ -55,3 +55,9 @@ rsconnect/
 !01_Data/Output/Contamination_Climate_Data_2010_2020.RData
 03_Paper/
 00_Code/old_code/
+02_Output/G-Form/Interventions/
+02_Output/G-Form/Timing/
+02_Output/G-Form/WeeklyEffects/
+02_Output/G-Form/PopulationEffects/
+02_Output/G-Form/Other/
+04_Conference/

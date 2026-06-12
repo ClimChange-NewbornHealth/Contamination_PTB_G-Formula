@@ -165,7 +165,7 @@ data_long <- data_long |>
 control_vars <- c(
   "sex", "age_group_mom", "educ_group_mom", "job_group_mom",
   "age_group_dad", "educ_group_dad", "job_group_dad",
-  "month_week1", "year_week1", "covid", "vulnerability", 
+  "month_week1", "year_week1", "covid", "vulnerability", "tad",
   "ndvi_full"
 )
 

@@ -108,7 +108,6 @@ births <- births |> filter(comuna %in% com_suburb) # 859626
 births <- births |> 
   left_join(com, by=c("comuna"="codigo_comuna"))
 
-
 ### 3. Create week_gest obs ----
 
 start_count <- nrow(births)

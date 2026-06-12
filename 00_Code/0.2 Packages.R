@@ -15,7 +15,6 @@ install_load <- function(packages){
 # Apply function
 install_load(c("rio", 
                "janitor", 
-               "tidyverse", 
                "openxlsx",
                "chilemapas", 
                "patchwork",
@@ -28,7 +27,6 @@ install_load(c("rio",
                "htmlwidgets",
                "future", 
                "purrr", 
-               "furrr",
                "future.apply", 
                "zoo",
                "splines",      
@@ -73,5 +71,8 @@ install_load(c("rio",
                'svMisc',
                "imputeTS",
                "meta",
-               "ggtext"
+               "ggtext",
+               "MASS",
+               "tidyverse",
+               "rlang"
                ))

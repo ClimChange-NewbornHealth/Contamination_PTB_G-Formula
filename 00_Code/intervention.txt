@@ -1,0 +1,16 @@
+Natural Course 
+PM2.5 < 20
+PM2.5 < 15
+PM2.5 < 10
+PM2.5 < 5
+PM2.5  < 20%
+NO2 (ppbv)
+Natural Course 
+NO2 < 20
+NO2 < 15
+NO2 < 10
+NO2 < 5
+NO2 < 20%
+O3 (ppbv)
+Natural Course 
+O3 < 20%

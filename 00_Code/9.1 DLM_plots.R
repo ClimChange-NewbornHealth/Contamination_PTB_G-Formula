@@ -14,7 +14,7 @@ data_out_model <- "02_Output/Models/"
 
 idw <- rio::import(paste0(data_out_model, "DLM_cox_idw_results.RData"))$results_cox |> 
   as.data.frame() |> 
-  select(matches("\\.(term|estimate|conf\\.low|conf\\.high)$")) |> 
+  dplyr::select(matches("\\.(term|estimate|conf\\.low|conf\\.high)$")) |> 
   pivot_longer(
     cols = matches("^(pm25|o3|no2)_idw\\.(term|estimate|conf\\.low|conf\\.high)$"),
     names_to = c("pollutant", ".value"),
@@ -34,7 +34,7 @@ glimpse(idw)
 
 krg <- rio::import(paste0(data_out_model, "DLM_cox_krg_results.RData"))$results_cox |> 
   as.data.frame() |> 
-  select(matches("\\.(term|estimate|conf\\.low|conf\\.high)$")) |> 
+  dplyr::select(matches("\\.(term|estimate|conf\\.low|conf\\.high)$")) |> 
   pivot_longer(
     cols = matches("^(pm25|o3|no2)_krg\\.(term|estimate|conf\\.low|conf\\.high)$"),
     names_to = c("pollutant", ".value"),
@@ -80,7 +80,7 @@ glimpse(data_models)
 ## Figure with the models ----
 
 y_delta <- max(abs(data_models$conf.low - 1), abs(data_models$conf.high - 1), na.rm = TRUE)
-y_step <- y_delta / 3
+y_step <- y_delta / 2
 y_breaks <- 1 + (-3:3) * y_step
 y_limits <- range(y_breaks)
 

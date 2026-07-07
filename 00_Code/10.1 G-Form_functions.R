@@ -26,9 +26,230 @@ GFORM_DEFAULTS <- list(
   follow_up_weeks = 28:36,
   baseline_scenario = "observed",
   population_week = 36L,
-  boot_iter = 200L,
+  boot_iter = 500L,
   boot_seed = 2026L,
-  figure4_pct = 0.20
+  figure4_pct = 0.20,
+  output_cumulative_risk_suffix = "curvas_riesgo_acumulado_global",
+  output_singleweek_heatmap_suffix = "mapa_calor_rd_semana_intervencion"
+)
+
+## Paralelismo (servidor Linux / local) ----
+
+gform_detect_ram_gb <- function() {
+  if (.Platform$OS.type == "unix" && file.exists("/proc/meminfo")) {
+    memtotal <- grep("^MemTotal:", readLines("/proc/meminfo", warn = FALSE), value = TRUE)
+    if (length(memtotal)) {
+      kb <- as.numeric(sub("[^0-9]", "", memtotal[1L]))
+      if (is.finite(kb)) return(kb / 1024^2)
+    }
+  }
+  NA_real_
+}
+
+gform_is_linux_server <- function() {
+  .Platform$OS.type == "unix" &&
+    identical(Sys.info()[["sysname"]], "Linux") &&
+    parallel::detectCores(logical = TRUE) >= 8L
+}
+
+gform_parallel_config <- function(
+    n_cores = parallel::detectCores(logical = TRUE),
+    ram_gb = gform_detect_ram_gb(),
+    reserve_cores = 4L,
+    reserve_ram_gb = 16L) {
+
+  if (!is.finite(n_cores) || n_cores < 1L) n_cores <- 4L
+  if (!is.finite(ram_gb)) ram_gb <- 16L
+
+  n_usable <- max(1L, n_cores - reserve_cores)
+  ram_usable <- max(8L, ram_gb - reserve_ram_gb)
+
+  n_cox <- min(9L, n_usable)
+  n_heatmap <- min(24L, n_usable)
+  n_build <- min(11L, n_usable)
+  n_bootstrap <- min(
+    max(4L, floor(ram_usable / 6L)),
+    max(8L, floor(n_usable * 0.75)),
+    20L
+  )
+
+  list(
+    n_cores = n_cores,
+    ram_gb = ram_gb,
+    n_workers_cox = n_cox,
+    n_workers_bootstrap = n_bootstrap,
+    n_workers_heatmap = n_heatmap,
+    n_workers_build = n_build,
+    n_workers_default = min(n_bootstrap, n_usable),
+    globals_max_gb = min(80L, max(16L, floor(ram_usable * 0.65))),
+    bootstrap_batch_size = min(20L, n_bootstrap),
+    use_fork = gform_is_linux_server(),
+    dt_threads = max(1L, n_cores - 2L)
+  )
+}
+
+gform_setup_parallel <- function(
+    n_workers = NULL,
+    globals_max_gb = NULL,
+    task = c("default", "cox", "bootstrap", "heatmap", "build"),
+    config = getOption("gform.parallel", NULL)) {
+
+  task <- match.arg(task)
+  if (is.null(config)) config <- gform_parallel_config()
+  options(gform.parallel = config)
+
+  if (is.null(n_workers)) {
+    n_workers <- switch(
+      task,
+      cox = config$n_workers_cox,
+      bootstrap = config$n_workers_bootstrap,
+      heatmap = config$n_workers_heatmap,
+      build = config$n_workers_build,
+      default = config$n_workers_default
+    )
+  }
+  if (is.null(globals_max_gb)) globals_max_gb <- config$globals_max_gb
+
+  options(future.globals.maxSize = globals_max_gb * 1024^3)
+
+  if (isTRUE(config$use_fork) && requireNamespace("future", quietly = TRUE)) {
+    future::plan(future::multicore, workers = n_workers)
+    plan_label <- paste0("multicore/fork (", n_workers, " workers)")
+  } else if (requireNamespace("future", quietly = TRUE)) {
+    future::plan(future::multisession, workers = n_workers)
+    plan_label <- paste0("multisession (", n_workers, " workers)")
+  }
+
+  if (requireNamespace("data.table", quietly = TRUE)) {
+    data.table::setDTthreads(config$dt_threads)
+  }
+
+  message(
+    "Paralelo [", task, "]: ", plan_label,
+    " | globals max: ", globals_max_gb, " GiB",
+    " | data.table threads: ", config$dt_threads
+  )
+  invisible(list(config = config, n_workers = n_workers, task = task))
+}
+
+## Registro de tiempos por fase ----
+
+gform_format_timestamp <- function(x = Sys.time()) {
+  format(x, "%Y-%m-%d %H:%M:%S")
+}
+
+gform_format_duration <- function(sec) {
+  if (!is.finite(sec) || sec < 0) return("NA")
+  if (sec < 60) return(sprintf("%.1f s", sec))
+  if (sec < 3600) return(sprintf("%.1f min (%.0f s)", sec / 60, sec))
+  sprintf("%.2f h (%.1f min)", sec / 3600, sec / 60)
+}
+
+gform_timing_log_init <- function() {
+  list(phases = list(), started_at = Sys.time())
+}
+
+gform_phase_start <- function(label) {
+  t0 <- Sys.time()
+  message("[", gform_format_timestamp(t0), "] INICIO — ", label)
+  list(label = label, start = t0)
+}
+
+gform_phase_end <- function(phase) {
+  t1 <- Sys.time()
+  sec <- as.numeric(difftime(t1, phase$start, units = "secs"))
+  message(
+    "[", gform_format_timestamp(t1), "] FIN — ", phase$label,
+    " | duración: ", gform_format_duration(sec)
+  )
+  list(
+    label = phase$label,
+    start = phase$start,
+    end = t1,
+    start_str = gform_format_timestamp(phase$start),
+    end_str = gform_format_timestamp(t1),
+    sec = sec
+  )
+}
+
+gform_timing_log_add <- function(log, record) {
+  log$phases <- c(log$phases, list(record))
+  log
+}
+
+gform_time_block <- function(label, expr) {
+  phase <- gform_phase_start(label)
+  result <- force(expr)
+  record <- gform_phase_end(phase)
+  list(result = result, timing = record)
+}
+
+gform_timing_total_sec <- function(log) {
+  if (!length(log$phases)) return(0)
+  sum(vapply(log$phases, function(p) as.numeric(p$sec), numeric(1)))
+}
+
+gform_timing_log_merge <- function(parent, child) {
+  if (is.null(child) || !length(child$phases)) return(parent)
+  for (p in child$phases) {
+    parent <- gform_timing_log_add(parent, p)
+  }
+  parent
+}
+
+gform_print_timing_summary <- function(log, title = "Resumen de tiempos") {
+  if (!length(log$phases)) {
+    message(title, ": (sin fases registradas)")
+    return(invisible(0))
+  }
+  total_sec <- gform_timing_total_sec(log)
+  message("\n", strrep("-", 72))
+  message(title)
+  message(strrep("-", 72))
+  for (p in log$phases) {
+    message(sprintf(
+      "  %-42s %10s  (%s → %s)",
+      p$label,
+      gform_format_duration(p$sec),
+      p$start_str,
+      p$end_str
+    ))
+  }
+  message(strrep("-", 72))
+  wall_sec <- log$wall_sec
+  if (!is.null(wall_sec) && is.finite(wall_sec)) {
+    message(sprintf("  %-42s %10s", "TOTAL (suma fases)", gform_format_duration(total_sec)))
+    message(sprintf(
+      "  %-42s %10s  (%s → %s)",
+      "TOTAL (reloj)",
+      gform_format_duration(wall_sec),
+      gform_format_timestamp(log$started_at),
+      gform_format_timestamp(if (!is.null(log$finished_at)) log$finished_at else Sys.time())
+    ))
+    if (total_sec > wall_sec * 1.05) {
+      message("  Nota: en ejecución paralela, la suma de fases puede superar el reloj.")
+    }
+  } else {
+    message(sprintf("  %-42s %10s", "TOTAL", gform_format_duration(total_sec)))
+  }
+  message(strrep("-", 72))
+  invisible(if (!is.null(wall_sec) && is.finite(wall_sec)) wall_sec else total_sec)
+}
+
+## Orden de ejecución (una intervención por corrida; ver 10.2) ----
+
+GFORM_INTERVENTION_ORDER <- c(
+  "pm25_krg_pct20",
+  "no2_krg_pct20",
+  "o3_krg_pct20",
+  "pm25_krg_lt20",
+  "pm25_krg_lt5",
+  "no2_krg_lt20",
+  "no2_krg_lt5",
+  "pm25_krg_lt15",
+  "pm25_krg_lt10",
+  "no2_krg_lt15",
+  "no2_krg_lt10"
 )
 
 ## Registro completo de intervenciones globales (ver intervention.txt) ----
@@ -112,6 +333,156 @@ GFORM_INTERVENTION_REGISTRY <- list(
     description = "O3 reducción 20% cada semana gestacional"
   )
 )
+
+gform_intervention_keys <- function() {
+  missing <- setdiff(GFORM_INTERVENTION_ORDER, names(GFORM_INTERVENTION_REGISTRY))
+  if (length(missing)) {
+    stop("GFORM_INTERVENTION_ORDER contiene IDs ausentes en el registro: ",
+         paste(missing, collapse = ", "))
+  }
+  GFORM_INTERVENTION_ORDER
+}
+
+print_gform_intervention_menu <- function(selected = NULL) {
+  keys <- gform_intervention_keys()
+  message("Intervenciones disponibles (cambiar intervention_number en 10.2):")
+  for (i in seq_along(keys)) {
+    spec <- GFORM_INTERVENTION_REGISTRY[[keys[i]]]
+    marker <- if (!is.null(selected) && i == selected) "  <-- seleccionada" else ""
+    message(sprintf(
+      "  %2d. %s — %s%s",
+      i, spec$intervention_id, spec$description, marker
+    ))
+  }
+  invisible(keys)
+}
+
+resolve_gform_intervention <- function(n) {
+  keys <- gform_intervention_keys()
+  n <- as.integer(n[[1L]])
+  if (length(n) != 1L || is.na(n) || n < 1L || n > length(keys)) {
+    stop(
+      "intervention_number debe ser un entero entre 1 y ", length(keys),
+      ". Ejecute print_gform_intervention_menu() para ver la lista."
+    )
+  }
+  keys[[n]]
+}
+
+gform_output_paths <- function(output_stub, dir_other) {
+  list(
+    cumulative_risk_curves = file.path(
+      dir_other,
+      paste0(output_stub, "_", GFORM_DEFAULTS$output_cumulative_risk_suffix, ".rds")
+    ),
+    singleweek_heatmap = file.path(
+      dir_other,
+      paste0(output_stub, "_", GFORM_DEFAULTS$output_singleweek_heatmap_suffix, ".rds")
+    )
+  )
+}
+
+gform_model_cache_path <- function(pollutant, dir_models) {
+  file.path(dir_models, paste0("natural_course_", pollutant, ".rds"))
+}
+
+gform_natural_course_cache_key <- function(
+    data_base,
+    pollutant,
+    risk_weeks_vec,
+    control_vars,
+    lag_weeks,
+    dependent_var,
+    risk_entry_week,
+    sample_frac = NULL) {
+
+  list(
+    n_births = nrow(data_base),
+    pollutant = pollutant,
+    risk_weeks = risk_weeks_vec,
+    control_vars = control_vars,
+    lag_weeks = lag_weeks,
+    dependent_var = dependent_var,
+    risk_entry_week = risk_entry_week,
+    sample_frac = sample_frac
+  )
+}
+
+load_or_fit_natural_course_models <- function(
+    pollutant,
+    dir_models,
+    data_base,
+    wide_exposicion_natural,
+    wide_tad_obs,
+    risk_weeks_vec,
+    control_vars = GFORM_DEFAULTS$control_vars,
+    lag_weeks = GFORM_DEFAULTS$lag_weeks,
+    dependent_var = GFORM_DEFAULTS$dependent_var,
+    risk_entry_week = GFORM_DEFAULTS$risk_entry_week,
+    sample_frac = NULL,
+    parallel = FALSE,
+    force_refit = FALSE) {
+
+  dir.create(dir_models, recursive = TRUE, showWarnings = FALSE)
+  cache_path <- gform_model_cache_path(pollutant, dir_models)
+  cache_key <- gform_natural_course_cache_key(
+    data_base = data_base,
+    pollutant = pollutant,
+    risk_weeks_vec = risk_weeks_vec,
+    control_vars = control_vars,
+    lag_weeks = lag_weeks,
+    dependent_var = dependent_var,
+    risk_entry_week = risk_entry_week,
+    sample_frac = sample_frac
+  )
+
+  if (!force_refit && file.exists(cache_path)) {
+    cached <- tryCatch(
+      readRDS(cache_path),
+      error = function(e) {
+        message("Cache Cox ilegible (", conditionMessage(e), "); re-ajustando modelos...")
+        NULL
+      }
+    )
+    if (!is.null(cached) && identical(cached$cache_key, cache_key)) {
+      message("Modelos Cox cacheados cargados: ", cache_path)
+      cached$model_store <- slim_model_store(cached$model_store)
+      if (!isTRUE(cached$slimmed)) {
+        message("Cache Cox marcado slim (re-guardado omitido para ahorrar RAM/tiempo).")
+      }
+      return(list(
+        model_store = cached$model_store,
+        cox_frame_natural = cached$cox_frame_natural,
+        from_cache = TRUE
+      ))
+    }
+    if (!is.null(cached)) {
+      message("Cache Cox desactualizado; re-ajustando modelos...")
+    }
+  }
+
+  fit <- fit_natural_course_models(
+    data_base = data_base,
+    wide_exposicion_natural = wide_exposicion_natural,
+    wide_tad_obs = wide_tad_obs,
+    risk_weeks_vec = risk_weeks_vec,
+    control_vars = control_vars,
+    lag_weeks = lag_weeks,
+    dependent_var = dependent_var,
+    risk_entry_week = risk_entry_week,
+    parallel = parallel
+  )
+
+  cache_obj <- c(
+    fit,
+    list(cache_key = cache_key, fitted_at = Sys.time(), slimmed = TRUE)
+  )
+  tmp_path <- paste0(cache_path, ".tmp")
+  saveRDS(cache_obj, tmp_path)
+  file.rename(tmp_path, cache_path)
+  message("Modelos Cox guardados en cache: ", cache_path)
+  c(fit, list(from_cache = FALSE))
+}
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
@@ -318,36 +689,59 @@ build_all_interventions <- function(
     n_workers = NULL) {
 
   pollutants_needed <- unique(vapply(registry, function(x) x$pollutant, character(1)))
-  raw_by_pollutant <- lapply(
-    pollutants_needed,
-    function(p) build_wide_raw_exposure(data_long, p, weeks_keep = weeks_keep)
+  prep_block <- gform_time_block(
+    "Preparar matrices raw por contaminante",
+    {
+      raw_by_pollutant <- lapply(
+        pollutants_needed,
+        function(p) build_wide_raw_exposure(data_long, p, weeks_keep = weeks_keep)
+      )
+      names(raw_by_pollutant) <- pollutants_needed
+      raw_by_pollutant
+    }
   )
-  names(raw_by_pollutant) <- pollutants_needed
+  raw_by_pollutant <- prep_block$result
 
   build_one <- function(key) {
     spec <- registry[[key]]
-    raw_wide <- raw_by_pollutant[[spec$pollutant]]
-    output_path <- file.path(output_dir, paste0(spec$intervention_id, ".rds"))
-    generate_intervention(
-      raw_wide_pollutant = raw_wide,
-      pollutant = spec$pollutant,
-      intervention = spec$intervention,
-      intervention_id = spec$intervention_id,
-      description = spec$description,
-      output_path = output_path,
-      weeks_keep = weeks_keep,
-      lag_weeks = lag_weeks,
-      overwrite = overwrite
-    )
-    output_path
+    label <- paste0("RDS — ", spec$intervention_id)
+    block <- gform_time_block(label, {
+      raw_wide <- raw_by_pollutant[[spec$pollutant]]
+      output_path <- file.path(output_dir, paste0(spec$intervention_id, ".rds"))
+      generate_intervention(
+        raw_wide_pollutant = raw_wide,
+        pollutant = spec$pollutant,
+        intervention = spec$intervention,
+        intervention_id = spec$intervention_id,
+        description = spec$description,
+        output_path = output_path,
+        weeks_keep = weeks_keep,
+        lag_weeks = lag_weeks,
+        overwrite = overwrite
+      )
+      output_path
+    })
+    list(path = block$result, timing = block$timing)
   }
 
   registry_keys <- names(registry)
   if (parallel && length(registry_keys) > 1L && requireNamespace("furrr", quietly = TRUE)) {
-    furrr::future_map(registry_keys, build_one, .options = furrr::furrr_options(seed = TRUE))
+    gform_setup_parallel(task = "build", n_workers = n_workers)
+    built <- furrr::future_map(registry_keys, build_one, .options = gform_furrr_options())
   } else {
-    lapply(registry_keys, build_one)
+    built <- lapply(registry_keys, build_one)
   }
+
+  timing <- gform_timing_log_init()
+  timing <- gform_timing_log_add(timing, prep_block$timing)
+  for (item in built) {
+    timing <- gform_timing_log_add(timing, item$timing)
+  }
+
+  list(
+    paths = vapply(built, function(x) x$path, character(1)),
+    timing = timing
+  )
 }
 
 ## Cox: utilidades de hazard discreto ----
@@ -399,27 +793,111 @@ build_cox_model_frame <- function(
   out
 }
 
+align_newdata_to_cox_fit <- function(cox_fit, newdata_df) {
+  out <- newdata_df
+  xlevels <- cox_fit$xlevels
+  if (length(xlevels)) {
+    for (nm in names(xlevels)) {
+      if (!nm %in% names(out)) next
+      out[[nm]] <- factor(out[[nm]], levels = xlevels[[nm]])
+    }
+  }
+  out
+}
+
 predict_cox_lp <- function(cox_fit, newdata, coef_override = NULL) {
-  if (is.null(coef_override)) {
-    return(as.numeric(stats::predict(cox_fit, newdata = newdata, type = "lp")))
+  newdata_df <- align_newdata_to_cox_fit(cox_fit, as.data.frame(newdata))
+  b <- stats::coef(cox_fit)
+  if (!is.null(coef_override)) {
+    ii <- intersect(names(b), names(coef_override))
+    b[ii] <- coef_override[ii]
   }
-  mm <- stats::model.matrix(stats::delete.response(stats::terms(cox_fit)), newdata)
-  beta <- coef_override
-  v <- rep(0, ncol(mm))
-  names(v) <- colnames(mm)
-  ii <- intersect(names(v), names(beta))
-  v[ii] <- unname(beta[ii])
-  fit_b <- stats::coef(cox_fit)
-  bad <- !is.finite(v)
-  if (any(bad)) {
-    jj <- intersect(names(v), names(fit_b))
-    v[bad] <- fit_b[jj[match(names(v)[bad], jj)]]
-    v[!is.finite(v)] <- 0
+  b[is.na(b)] <- 0
+  mm <- stats::model.matrix(
+    stats::delete.response(stats::terms(cox_fit)),
+    newdata_df,
+    xlev = cox_fit$xlevels
+  )
+  if ("(Intercept)" %in% colnames(mm)) {
+    mm <- mm[, colnames(mm) != "(Intercept)", drop = FALSE]
   }
-  drop(mm %*% v)
+  cols <- intersect(colnames(mm), names(b))
+  as.numeric(drop(mm[, cols, drop = FALSE] %*% b[cols]))
 }
 
 ## Etapa 2: ajuste Cox (solo curso natural; referencia 9.0) ----
+
+fit_cox_one_week <- function(
+    rw,
+    data_model_df,
+    control_vars,
+    lag_weeks,
+    dependent_var,
+    risk_entry_week) {
+
+  if (rw < risk_entry_week) return(NULL)
+
+  exp_var <- paste0("exposicion_", rw)
+  lag_var <- paste0("exposicion_lagged_", rw)
+  tad_var <- paste0("tad_", rw)
+  pred_terms <- c(
+    exp_var,
+    lag_var[lag_var %in% paste0("exposicion_lagged_", lag_weeks)],
+    tad_var
+  )
+
+  rhs <- paste(c(pred_terms, control_vars), collapse = " + ")
+  fml <- stats::as.formula(paste0(
+    "Surv(tstart, weeks, ", dependent_var, ") ~ ", rhs
+  ))
+
+  vars_needed <- c("id", "weeks", "tstart", dependent_var, pred_terms, control_vars)
+  model_df <- data_model_df[, vars_needed, drop = FALSE]
+  model_df <- stats::na.omit(model_df)
+
+  if (nrow(model_df) < 50L) {
+    warning("Muy pocas filas para la semana ", rw, "; modelo Cox omitido.")
+    return(NULL)
+  }
+
+  cox_fit <- tryCatch(
+    survival::coxph(fml, data = model_df, x = FALSE, y = FALSE),
+    error = function(e) NULL
+  )
+  if (is.null(cox_fit)) {
+    warning("Cox no convergió o error en semana ", rw)
+    return(NULL)
+  }
+
+  slim_coxph_model_store_entry(list(
+    model = cox_fit,
+    formula = fml,
+    id_order = model_df$id,
+    pred_terms = pred_terms,
+    control_vars = control_vars,
+    baseline_hazard = survival::basehaz(cox_fit, centered = FALSE),
+    risk_week = rw
+  ))
+}
+
+slim_coxph_model_store_entry <- function(entry) {
+  if (is.null(entry) || is.null(entry$model)) return(entry)
+  entry$model$x <- NULL
+  entry$model$y <- NULL
+  entry$model$residuals <- NULL
+  entry$model$linear.predictors <- NULL
+  entry$model$means <- NULL
+  entry$model$weights <- NULL
+  entry$model$offset <- NULL
+  entry
+}
+
+slim_model_store <- function(model_store) {
+  if (is.null(model_store)) return(model_store)
+  out <- lapply(model_store, slim_coxph_model_store_entry)
+  names(out) <- names(model_store)
+  out
+}
 
 fit_natural_course_models <- function(
     data_base,
@@ -432,7 +910,7 @@ fit_natural_course_models <- function(
     risk_entry_week = GFORM_DEFAULTS$risk_entry_week,
     parallel = TRUE) {
 
-  data_model <- build_cox_model_frame(
+  cox_frame_natural <- build_cox_model_frame(
     data_base = data_base,
     wide_exposicion = wide_exposicion_natural,
     wide_tad_obs = wide_tad_obs,
@@ -440,59 +918,27 @@ fit_natural_course_models <- function(
     dependent_var = dependent_var,
     risk_entry_week = risk_entry_week
   )
-  data_model_df <- as.data.frame(data_model)
-
-  fit_one_week <- function(rw) {
-    if (rw < risk_entry_week) return(NULL)
-
-    exp_var <- paste0("exposicion_", rw)
-    lag_var <- paste0("exposicion_lagged_", rw)
-    tad_var <- paste0("tad_", rw)
-    pred_terms <- c(
-      exp_var,
-      lag_var[lag_var %in% paste0("exposicion_lagged_", lag_weeks)],
-      tad_var
-    )
-
-    rhs <- paste(c(pred_terms, control_vars), collapse = " + ")
-    fml <- stats::as.formula(paste0(
-      "Surv(tstart, weeks, ", dependent_var, ") ~ ", rhs
-    ))
-
-    vars_needed <- c("id", "weeks", "tstart", dependent_var, pred_terms, control_vars)
-    model_df <- data_model_df[, vars_needed, drop = FALSE]
-    model_df <- stats::na.omit(model_df)
-
-    if (nrow(model_df) < 50L) {
-      warning("Muy pocas filas para la semana ", rw, "; modelo Cox omitido.")
-      return(NULL)
-    }
-
-    cox_fit <- tryCatch(
-      survival::coxph(fml, data = model_df, x = TRUE, y = TRUE),
-      error = function(e) NULL
-    )
-    if (is.null(cox_fit)) {
-      warning("Cox no convergió o error en semana ", rw)
-      return(NULL)
-    }
-
-    list(
-      model = cox_fit,
-      formula = fml,
-      id_order = model_df$id,
-      pred_terms = pred_terms,
-      control_vars = control_vars,
-      baseline_hazard = survival::basehaz(cox_fit, centered = FALSE),
-      risk_week = rw
-    )
-  }
+  data_model_df <- as.data.frame(cox_frame_natural)
 
   weeks_to_fit <- risk_weeks_vec[risk_weeks_vec >= risk_entry_week]
   if (parallel && length(weeks_to_fit) > 1L && requireNamespace("furrr", quietly = TRUE)) {
-    fitted <- furrr::future_map(weeks_to_fit, fit_one_week, .options = furrr::furrr_options(seed = TRUE))
+    gform_setup_parallel(task = "cox")
+    fitted <- furrr::future_map(
+      weeks_to_fit,
+      fit_cox_one_week,
+      data_model_df = data_model_df,
+      control_vars = control_vars,
+      lag_weeks = lag_weeks,
+      dependent_var = dependent_var,
+      risk_entry_week = risk_entry_week,
+      .options = gform_furrr_options()
+    )
   } else {
-    fitted <- lapply(weeks_to_fit, fit_one_week)
+    fitted <- lapply(weeks_to_fit, function(rw) {
+      fit_cox_one_week(
+        rw, data_model_df, control_vars, lag_weeks, dependent_var, risk_entry_week
+      )
+    })
   }
 
   model_store <- vector("list", length(risk_weeks_vec))
@@ -500,7 +946,12 @@ fit_natural_course_models <- function(
   for (i in seq_along(weeks_to_fit)) {
     model_store[[as.character(weeks_to_fit[i])]] <- fitted[[i]]
   }
-  model_store
+  model_store <- slim_model_store(model_store)
+
+  list(
+    model_store = model_store,
+    cox_frame_natural = cox_frame_natural
+  )
 }
 
 ## Predicción de hazards semanales (Cox → probabilidad discreta) ----
@@ -508,23 +959,32 @@ fit_natural_course_models <- function(
 predict_weekly_hazards <- function(
     model_store,
     person_weeks,
-    data_base,
-    wide_exposicion,
-    wide_tad_obs,
     risk_weeks_vec,
-    control_vars = GFORM_DEFAULTS$control_vars,
-    dependent_var = GFORM_DEFAULTS$dependent_var,
     risk_entry_week = GFORM_DEFAULTS$risk_entry_week,
-    coef_override = NULL) {
+    coef_override = NULL,
+    cox_frame = NULL,
+    data_base = NULL,
+    wide_exposicion = NULL,
+    wide_tad_obs = NULL,
+    control_vars = GFORM_DEFAULTS$control_vars,
+    dependent_var = GFORM_DEFAULTS$dependent_var) {
 
-  cox_frame <- build_cox_model_frame(
-    data_base = data_base,
-    wide_exposicion = wide_exposicion,
-    wide_tad_obs = wide_tad_obs,
-    control_vars = control_vars,
-    dependent_var = dependent_var,
-    risk_entry_week = risk_entry_week
-  )
+  if (is.null(cox_frame)) {
+    if (is.null(data_base) || is.null(wide_exposicion) || is.null(wide_tad_obs)) {
+      stop("predict_weekly_hazards: se requiere cox_frame o data_base + wide_exposicion + wide_tad_obs.")
+    }
+    cox_frame <- build_cox_model_frame(
+      data_base = data_base,
+      wide_exposicion = wide_exposicion,
+      wide_tad_obs = wide_tad_obs,
+      control_vars = control_vars,
+      dependent_var = dependent_var,
+      risk_entry_week = risk_entry_week
+    )
+  } else if (!data.table::is.data.table(cox_frame)) {
+    cox_frame <- data.table::as.data.table(cox_frame)
+    data.table::setkey(cox_frame, id)
+  }
 
   out_list <- vector("list", length(risk_weeks_vec))
   names(out_list) <- as.character(risk_weeks_vec)
@@ -600,7 +1060,7 @@ compute_weekly_effects <- function(prob_natural, prob_intervention) {
   tibble::as_tibble(out)
 }
 
-compute_figure3_curves <- function(
+compute_cumulative_risk_curves_global <- function(
     weekly_effects,
     follow_up_weeks = GFORM_DEFAULTS$follow_up_weeks) {
 
@@ -612,14 +1072,21 @@ compute_figure3_curves <- function(
     cumulative_risk_intervention = risk_intervention,
     risk_difference = risk_difference
   )]
-  tibble::as_tibble(dt[, .(
+  out <- tibble::as_tibble(dt[, .(
     follow_up_week,
     cumulative_risk_observed,
     cumulative_risk_intervention,
     risk_ratio,
     risk_difference
   )])
+  attr(out, "description") <- paste(
+    "Riesgo acumulado medio de PTB por semana de seguimiento:",
+    "curso natural (exposicion observada) vs intervencion global en todas las semanas gestacionales."
+  )
+  out
 }
+
+compute_figure3_curves <- compute_cumulative_risk_curves_global
 
 compute_population_effects <- function(
     prob_natural,
@@ -657,38 +1124,28 @@ compute_population_effects <- function(
   )])
 }
 
-compute_figure4_heatmap <- function(
+compute_singleweek_intervention_heatmap <- function(
     model_store,
     person_weeks,
     data_base,
     raw_wide_pollutant,
     pollutant,
     wide_tad_obs,
-    wide_exposicion_natural,
     risk_weeks_vec,
     control_vars,
+    nat_mean = NULL,
     intervention_weeks = GFORM_DEFAULTS$weeks_exposure,
     follow_up_weeks = GFORM_DEFAULTS$follow_up_weeks,
     pct = GFORM_DEFAULTS$figure4_pct,
     dependent_var = GFORM_DEFAULTS$dependent_var,
     risk_entry_week = GFORM_DEFAULTS$risk_entry_week,
-    parallel = TRUE) {
+    parallel = FALSE) {
 
   single_intervention <- list(type = "pct_reduce", pct = pct)
 
-  prob_natural <- predict_weekly_hazards(
-    model_store = model_store,
-    person_weeks = person_weeks,
-    data_base = data_base,
-    wide_exposicion = wide_exposicion_natural,
-    wide_tad_obs = wide_tad_obs,
-    risk_weeks_vec = risk_weeks_vec,
-    control_vars = control_vars,
-    dependent_var = dependent_var,
-    risk_entry_week = risk_entry_week
-  )
-  surv_nat <- compute_survival(prob_natural)
-  nat_mean <- surv_nat[, .(risk_natural = mean(risk, na.rm = TRUE)), by = time]
+  if (is.null(nat_mean)) {
+    stop("compute_singleweek_intervention_heatmap: se requiere nat_mean (riesgo acumulado medio bajo curso natural).")
+  }
 
   compute_one_col <- function(iw) {
     wide_cf <- build_exposicion_wide_from_raw(
@@ -697,15 +1154,19 @@ compute_figure4_heatmap <- function(
       intervention = single_intervention,
       single_week = iw
     )
-    prob_int <- predict_weekly_hazards(
-      model_store = model_store,
-      person_weeks = person_weeks,
+    cox_frame_iw <- build_cox_model_frame(
       data_base = data_base,
       wide_exposicion = wide_cf,
       wide_tad_obs = wide_tad_obs,
-      risk_weeks_vec = risk_weeks_vec,
       control_vars = control_vars,
       dependent_var = dependent_var,
+      risk_entry_week = risk_entry_week
+    )
+    prob_int <- predict_weekly_hazards(
+      model_store = model_store,
+      person_weeks = person_weeks,
+      risk_weeks_vec = risk_weeks_vec,
+      cox_frame = cox_frame_iw,
       risk_entry_week = risk_entry_week
     )
     surv_int <- compute_survival(prob_int)
@@ -721,10 +1182,11 @@ compute_figure4_heatmap <- function(
   }
 
   if (parallel && length(intervention_weeks) > 1L && requireNamespace("furrr", quietly = TRUE)) {
+    gform_setup_parallel(task = "heatmap")
     pieces <- furrr::future_map(
       intervention_weeks,
       compute_one_col,
-      .options = furrr::furrr_options(seed = TRUE)
+      .options = gform_furrr_options()
     )
   } else {
     pieces <- lapply(intervention_weeks, compute_one_col)
@@ -736,11 +1198,20 @@ compute_figure4_heatmap <- function(
     follow_up_week ~ intervention_week,
     value.var = "risk_difference"
   )
-  list(
+  out <- list(
     long = tibble::as_tibble(long_df),
     wide = tibble::as_tibble(wide_mat)
   )
+  attr(out, "description") <- paste0(
+    "Mapa de calor RD acumulado de PTB: reduccion del ",
+    round(100 * pct), "% en una sola semana gestacional (eje X) ",
+    "evaluado en semanas de seguimiento ", min(follow_up_weeks), "-", max(follow_up_weeks),
+    " (eje Y), referencia curso natural comun."
+  )
+  out
 }
+
+compute_figure4_heatmap <- compute_singleweek_intervention_heatmap
 
 ## Bootstrap paramétrico (coeficientes Cox) ----
 
@@ -773,83 +1244,64 @@ simulate_coefs_list <- function(model_store, risk_weeks_vec) {
   coefs_list
 }
 
-bootstrap_gformula_effects <- function(
+bootstrap_one_iter <- function(
+    iter,
     model_store,
     person_weeks,
-    data_base,
-    wide_exposicion_natural,
-    wide_exposicion_intervention,
-    wide_tad_obs,
+    cox_frame_natural,
+    cox_frame_intervention,
     risk_weeks_vec,
-    control_vars,
     total_births,
-    dependent_var = GFORM_DEFAULTS$dependent_var,
-    risk_entry_week = GFORM_DEFAULTS$risk_entry_week,
-    boot_iter = GFORM_DEFAULTS$boot_iter,
-    boot_seed = GFORM_DEFAULTS$boot_seed,
-    target_week = GFORM_DEFAULTS$population_week,
-    baseline_scenario = GFORM_DEFAULTS$baseline_scenario,
-    intervention_scenario = "intervention",
-    parallel = TRUE) {
+    dependent_var,
+    risk_entry_week,
+    target_week,
+    baseline_scenario,
+    intervention_scenario,
+    boot_seed = GFORM_DEFAULTS$boot_seed) {
 
-  boot_fn <- function(iter) {
-    coefs_list <- simulate_coefs_list(model_store, risk_weeks_vec)
-    prob_nat <- predict_weekly_hazards(
-      model_store, person_weeks, data_base,
-      wide_exposicion_natural, wide_tad_obs, risk_weeks_vec,
-      control_vars = control_vars,
-      dependent_var = dependent_var,
-      risk_entry_week = risk_entry_week,
-      coef_override = coefs_list
-    )
-    prob_int <- predict_weekly_hazards(
-      model_store, person_weeks, data_base,
-      wide_exposicion_intervention, wide_tad_obs, risk_weeks_vec,
-      control_vars = control_vars,
-      dependent_var = dependent_var,
-      risk_entry_week = risk_entry_week,
-      coef_override = coefs_list
-    )
-    list(
-      iter = iter,
-      weekly = compute_weekly_effects(prob_nat, prob_int),
-      population = compute_population_effects(
-        prob_nat, prob_int, total_births,
-        target_week = target_week,
-        baseline_scenario = baseline_scenario,
-        intervention_scenario = intervention_scenario
-      )
-    )
-  }
-
-  if (parallel && requireNamespace("furrr", quietly = TRUE)) {
-    boot_list <- furrr::future_map(
-      seq_len(boot_iter),
-      boot_fn,
-      .options = furrr::furrr_options(seed = TRUE)
-    )
-  } else {
-    set.seed(boot_seed)
-    boot_list <- lapply(seq_len(boot_iter), boot_fn)
-  }
-
-  weekly_boot <- data.table::rbindlist(
-    lapply(boot_list, function(x) {
-      dt <- data.table::as.data.table(x$weekly)
-      dt[, iter := x$iter]
-      dt
-    }),
-    use.names = TRUE, fill = TRUE
+  set.seed(boot_seed + iter)
+  coefs_list <- simulate_coefs_list(model_store, risk_weeks_vec)
+  prob_nat <- predict_weekly_hazards(
+    model_store = model_store,
+    person_weeks = person_weeks,
+    risk_weeks_vec = risk_weeks_vec,
+    cox_frame = cox_frame_natural,
+    risk_entry_week = risk_entry_week,
+    coef_override = coefs_list
   )
-
-  pop_boot <- data.table::rbindlist(
-    lapply(boot_list, function(x) {
-      dt <- data.table::as.data.table(x$population)
-      dt[, iter := x$iter]
-      dt
-    }),
-    use.names = TRUE, fill = TRUE
+  prob_int <- predict_weekly_hazards(
+    model_store = model_store,
+    person_weeks = person_weeks,
+    risk_weeks_vec = risk_weeks_vec,
+    cox_frame = cox_frame_intervention,
+    risk_entry_week = risk_entry_week,
+    coef_override = coefs_list
   )
+  list(
+    iter = iter,
+    weekly = compute_weekly_effects(prob_nat, prob_int),
+    population = compute_population_effects(
+      prob_nat, prob_int, total_births,
+      target_week = target_week,
+      baseline_scenario = baseline_scenario,
+      intervention_scenario = intervention_scenario
+    )
+  )
+}
+
+gform_bootstrap_paths <- function(output_stub, dir_bootstrap) {
+  base <- file.path(dir_bootstrap, output_stub)
+  list(
+    dir = base,
+    weekly = file.path(base, "weekly_boot.csv"),
+    population = file.path(base, "population_boot.csv"),
+    checkpoint = file.path(base, "boot_checkpoint.rds")
+  )
+}
+
+compute_bootstrap_ci <- function(weekly_boot, pop_boot) {
+  weekly_boot <- data.table::as.data.table(weekly_boot)
+  pop_boot <- data.table::as.data.table(pop_boot)
 
   weekly_ci <- weekly_boot[, .(
     risk_natural_lcl = stats::quantile(risk_natural, 0.025, na.rm = TRUE),
@@ -860,7 +1312,7 @@ bootstrap_gformula_effects <- function(
     risk_ratio_ucl = stats::quantile(risk_ratio, 0.975, na.rm = TRUE),
     risk_difference_lcl = stats::quantile(risk_difference, 0.025, na.rm = TRUE),
     risk_difference_ucl = stats::quantile(risk_difference, 0.975, na.rm = TRUE)
-  ), by = week]
+  ), by = "week"]
 
   pop_ci <- pop_boot[, .(
     prevalence_lcl = stats::quantile(prevalence, 0.025, na.rm = TRUE),
@@ -873,13 +1325,173 @@ bootstrap_gformula_effects <- function(
     cases_ucl = stats::quantile(cases, 0.975, na.rm = TRUE),
     attributable_risk_lcl = stats::quantile(attributable_risk, 0.025, na.rm = TRUE),
     attributable_risk_ucl = stats::quantile(attributable_risk, 0.975, na.rm = TRUE)
-  ), by = scenario]
+  ), by = "scenario"]
+
+  list(
+    weekly_ci = tibble::as_tibble(weekly_ci),
+    population_ci = tibble::as_tibble(pop_ci)
+  )
+}
+
+bootstrap_gformula_effects <- function(
+    model_store,
+    person_weeks,
+    cox_frame_natural,
+    cox_frame_intervention,
+    risk_weeks_vec,
+    total_births,
+    output_stub,
+    dir_bootstrap,
+    dependent_var = GFORM_DEFAULTS$dependent_var,
+    risk_entry_week = GFORM_DEFAULTS$risk_entry_week,
+    boot_iter = GFORM_DEFAULTS$boot_iter,
+    boot_seed = GFORM_DEFAULTS$boot_seed,
+    target_week = GFORM_DEFAULTS$population_week,
+    baseline_scenario = GFORM_DEFAULTS$baseline_scenario,
+    intervention_scenario = "intervention",
+    resume = TRUE,
+    checkpoint_every = 10L,
+    parallel = FALSE,
+    bootstrap_batch_size = NULL) {
+
+  paths <- gform_bootstrap_paths(output_stub, dir_bootstrap)
+  dir.create(paths$dir, recursive = TRUE, showWarnings = FALSE)
+
+  append_one_result <- function(one, iter) {
+    wdt <- data.table::as.data.table(one$weekly)
+    wdt[, iter := iter]
+    pdt <- data.table::as.data.table(one$population)
+    pdt[, iter := iter]
+
+    append_mode <- file.exists(paths$weekly) && iter > 1L
+    data.table::fwrite(
+      wdt, paths$weekly,
+      append = append_mode,
+      col.names = !append_mode
+    )
+    data.table::fwrite(
+      pdt, paths$population,
+      append = append_mode,
+      col.names = !append_mode
+    )
+  }
+
+  run_one_iter <- function(iter) {
+    bootstrap_one_iter(
+      iter = iter,
+      model_store = model_store,
+      person_weeks = person_weeks,
+      cox_frame_natural = cox_frame_natural,
+      cox_frame_intervention = cox_frame_intervention,
+      risk_weeks_vec = risk_weeks_vec,
+      total_births = total_births,
+      dependent_var = dependent_var,
+      risk_entry_week = risk_entry_week,
+      target_week = target_week,
+      baseline_scenario = baseline_scenario,
+      intervention_scenario = intervention_scenario,
+      boot_seed = boot_seed
+    )
+  }
+
+  start_iter <- 1L
+  if (resume && file.exists(paths$checkpoint)) {
+    ck <- readRDS(paths$checkpoint)
+    if (identical(ck$boot_iter, boot_iter) &&
+        identical(ck$boot_seed, boot_seed) &&
+        ck$last_completed >= boot_iter) {
+      message("Bootstrap ya completo (", boot_iter, " iter); leyendo réplicas desde disco.")
+      weekly_boot <- data.table::fread(paths$weekly)
+      pop_boot <- data.table::fread(paths$population)
+      ci <- compute_bootstrap_ci(weekly_boot, pop_boot)
+      return(list(
+        weekly_boot = weekly_boot,
+        population_boot = pop_boot,
+        bootstrap_paths = paths,
+        weekly_ci = ci$weekly_ci,
+        population_ci = ci$population_ci
+      ))
+    }
+    if (identical(ck$boot_iter, boot_iter) && identical(ck$boot_seed, boot_seed)) {
+      start_iter <- ck$last_completed + 1L
+      message("Bootstrap: reanudando desde iteración ", start_iter, " / ", boot_iter)
+    }
+  }
+
+  if (start_iter == 1L) {
+    if (file.exists(paths$weekly)) file.remove(paths$weekly)
+    if (file.exists(paths$population)) file.remove(paths$population)
+    if (file.exists(paths$checkpoint)) file.remove(paths$checkpoint)
+  }
+
+  cfg <- getOption("gform.parallel", gform_parallel_config())
+  if (is.null(bootstrap_batch_size)) {
+    bootstrap_batch_size <- if (parallel) cfg$bootstrap_batch_size else 1L
+  }
+  bootstrap_batch_size <- max(1L, as.integer(bootstrap_batch_size))
+
+  if (parallel && requireNamespace("furrr", quietly = TRUE)) {
+    gform_setup_parallel(task = "bootstrap", config = cfg)
+    message(
+      "Bootstrap paralelo: lotes de ", bootstrap_batch_size,
+      " iteraciones (", cfg$n_workers_bootstrap, " workers)..."
+    )
+    batch_starts <- seq(start_iter, boot_iter, by = bootstrap_batch_size)
+    for (batch_start in batch_starts) {
+      batch_end <- min(batch_start + bootstrap_batch_size - 1L, boot_iter)
+      iters <- batch_start:batch_end
+      batch_results <- furrr::future_map(
+        iters,
+        run_one_iter,
+        .options = gform_furrr_options()
+      )
+      for (k in seq_along(iters)) {
+        append_one_result(batch_results[[k]], iters[k])
+      }
+      rm(batch_results)
+      gc(verbose = FALSE)
+
+      saveRDS(list(
+        boot_iter = boot_iter,
+        boot_seed = boot_seed,
+        last_completed = batch_end,
+        updated_at = Sys.time()
+      ), paths$checkpoint)
+      message("Bootstrap checkpoint: ", batch_end, " / ", boot_iter)
+    }
+  } else {
+    if (isTRUE(parallel)) {
+      message("Bootstrap paralelo no disponible (furrr); ejecutando secuencial.")
+    }
+    for (iter in start_iter:boot_iter) {
+      one <- run_one_iter(iter)
+      append_one_result(one, iter)
+      rm(one)
+      gc(verbose = FALSE)
+
+      if (iter %% checkpoint_every == 0L || iter == boot_iter) {
+        saveRDS(list(
+          boot_iter = boot_iter,
+          boot_seed = boot_seed,
+          last_completed = iter,
+          updated_at = Sys.time()
+        ), paths$checkpoint)
+        message("Bootstrap checkpoint: ", iter, " / ", boot_iter)
+      }
+    }
+  }
+
+  message("Bootstrap: leyendo réplicas y calculando IC...")
+  weekly_boot <- data.table::fread(paths$weekly)
+  pop_boot <- data.table::fread(paths$population)
+  ci <- compute_bootstrap_ci(weekly_boot, pop_boot)
 
   list(
     weekly_boot = weekly_boot,
     population_boot = pop_boot,
-    weekly_ci = tibble::as_tibble(weekly_ci),
-    population_ci = tibble::as_tibble(pop_ci)
+    weekly_ci = ci$weekly_ci,
+    population_ci = ci$population_ci,
+    bootstrap_paths = paths
   )
 }
 
@@ -889,13 +1501,16 @@ run_gform_intervention <- function(
     intervention_spec,
     intervention_path,
     data_base,
-    data_long,
     wide_tad_obs,
     model_store,
     person_weeks,
     risk_weeks_vec,
     control_vars,
     total_births,
+    cox_frame_natural = NULL,
+    data_long = NULL,
+    wide_exposicion_natural = NULL,
+    raw_wide_pollutant = NULL,
     dependent_var = GFORM_DEFAULTS$dependent_var,
     risk_entry_week = GFORM_DEFAULTS$risk_entry_week,
     follow_up_weeks = GFORM_DEFAULTS$follow_up_weeks,
@@ -903,104 +1518,394 @@ run_gform_intervention <- function(
     boot_seed = GFORM_DEFAULTS$boot_seed,
     target_week = GFORM_DEFAULTS$population_week,
     run_bootstrap = TRUE,
-    run_figure4 = FALSE,
-    parallel = TRUE) {
+    run_singleweek_heatmap = FALSE,
+    parallel_singleweek_heatmap = FALSE,
+    parallel_bootstrap = FALSE,
+    dir_bootstrap = NULL,
+    bootstrap_resume = TRUE) {
 
-  intervention_obj <- readRDS(intervention_path)
-  pollutant <- intervention_spec$pollutant
+  timing <- gform_timing_log_init()
 
-  raw_pm <- build_wide_raw_exposure(
-    data_long, pollutant, weeks_keep = GFORM_DEFAULTS$weeks_exposure
-  )
-  wide_exposicion_natural <- build_exposicion_wide_from_raw(
-    raw_wide = raw_pm,
-    pollutant = pollutant,
-    intervention = list(type = "none")
-  )
-  wide_exposicion_intervention <- intervention_obj$wide_exposicion
-  wide_exposicion_intervention <- wide_exposicion_intervention[id %in% data_base$id]
+  block <- gform_time_block("Construir frame Cox intervención", {
+    intervention_obj <- readRDS(intervention_path)
+    pollutant <- intervention_spec$pollutant
 
-  prob_natural <- predict_weekly_hazards(
-    model_store = model_store,
-    person_weeks = person_weeks,
-    data_base = data_base,
-    wide_exposicion = wide_exposicion_natural,
-    wide_tad_obs = wide_tad_obs,
-    risk_weeks_vec = risk_weeks_vec,
-    control_vars = control_vars,
-    dependent_var = dependent_var,
-    risk_entry_week = risk_entry_week
-  )
+    if (is.null(raw_wide_pollutant)) {
+      if (is.null(data_long)) {
+        stop("Se requiere data_long o raw_wide_pollutant preconstruido.")
+      }
+      raw_wide_pollutant <- build_wide_raw_exposure(
+        data_long, pollutant, weeks_keep = GFORM_DEFAULTS$weeks_exposure
+      )
+    }
+    if (is.null(wide_exposicion_natural) && is.null(cox_frame_natural)) {
+      wide_exposicion_natural <- build_exposicion_wide_from_raw(
+        raw_wide = raw_wide_pollutant,
+        pollutant = pollutant,
+        intervention = list(type = "none")
+      )
+    }
+    if (is.null(cox_frame_natural)) {
+      cox_frame_natural <- build_cox_model_frame(
+        data_base = data_base,
+        wide_exposicion = wide_exposicion_natural,
+        wide_tad_obs = wide_tad_obs,
+        control_vars = control_vars,
+        dependent_var = dependent_var,
+        risk_entry_week = risk_entry_week
+      )
+    }
 
-  prob_intervention <- predict_weekly_hazards(
-    model_store = model_store,
-    person_weeks = person_weeks,
-    data_base = data_base,
-    wide_exposicion = wide_exposicion_intervention,
-    wide_tad_obs = wide_tad_obs,
-    risk_weeks_vec = risk_weeks_vec,
-    control_vars = control_vars,
-    dependent_var = dependent_var,
-    risk_entry_week = risk_entry_week
-  )
+    wide_exposicion_intervention <- intervention_obj$wide_exposicion
+    wide_exposicion_intervention <- wide_exposicion_intervention[id %in% data_base$id]
+    cox_frame_intervention <- build_cox_model_frame(
+      data_base = data_base,
+      wide_exposicion = wide_exposicion_intervention,
+      wide_tad_obs = wide_tad_obs,
+      control_vars = control_vars,
+      dependent_var = dependent_var,
+      risk_entry_week = risk_entry_week
+    )
+    rm(intervention_obj)
+    gc()
 
-  weekly_effects <- compute_weekly_effects(prob_natural, prob_intervention)
-  figure3 <- compute_figure3_curves(weekly_effects, follow_up_weeks = follow_up_weeks)
-  population_effects <- compute_population_effects(
-    prob_natural = prob_natural,
-    prob_intervention = prob_intervention,
-    total_births = total_births,
-    target_week = target_week
-  )
+    list(
+      pollutant = pollutant,
+      raw_wide_pollutant = raw_wide_pollutant,
+      cox_frame_natural = cox_frame_natural,
+      cox_frame_intervention = cox_frame_intervention
+    )
+  })
+  timing <- gform_timing_log_add(timing, block$timing)
+  pollutant <- block$result$pollutant
+  raw_wide_pollutant <- block$result$raw_wide_pollutant
+  cox_frame_natural <- block$result$cox_frame_natural
+  cox_frame_intervention <- block$result$cox_frame_intervention
+
+  block <- gform_time_block("Predicción hazards — curso natural", {
+    predict_weekly_hazards(
+      model_store = model_store,
+      person_weeks = person_weeks,
+      risk_weeks_vec = risk_weeks_vec,
+      cox_frame = cox_frame_natural,
+      risk_entry_week = risk_entry_week
+    )
+  })
+  timing <- gform_timing_log_add(timing, block$timing)
+  prob_natural <- block$result
+
+  block <- gform_time_block("Predicción hazards — intervención", {
+    predict_weekly_hazards(
+      model_store = model_store,
+      person_weeks = person_weeks,
+      risk_weeks_vec = risk_weeks_vec,
+      cox_frame = cox_frame_intervention,
+      risk_entry_week = risk_entry_week
+    )
+  })
+  timing <- gform_timing_log_add(timing, block$timing)
+  prob_intervention <- block$result
+
+  block <- gform_time_block("Efectos puntuales (supervivencia, semanal, poblacional, curvas)", {
+    surv_nat <- compute_survival(prob_natural)
+    nat_mean <- surv_nat[, .(risk_natural = mean(risk, na.rm = TRUE)), by = time]
+
+    weekly_effects <- compute_weekly_effects(prob_natural, prob_intervention)
+    cumulative_risk_curves <- compute_cumulative_risk_curves_global(
+      weekly_effects, follow_up_weeks = follow_up_weeks
+    )
+    population_effects <- compute_population_effects(
+      prob_natural = prob_natural,
+      prob_intervention = prob_intervention,
+      total_births = total_births,
+      target_week = target_week
+    )
+    list(
+      nat_mean = nat_mean,
+      weekly_effects = weekly_effects,
+      cumulative_risk_curves = cumulative_risk_curves,
+      population_effects = population_effects
+    )
+  })
+  timing <- gform_timing_log_add(timing, block$timing)
+  nat_mean <- block$result$nat_mean
+  weekly_effects <- block$result$weekly_effects
+  cumulative_risk_curves <- block$result$cumulative_risk_curves
+  population_effects <- block$result$population_effects
+  rm(prob_natural, prob_intervention)
+  gc()
 
   boot_out <- NULL
   weekly_ci <- weekly_effects
   population_ci <- population_effects
   if (run_bootstrap && boot_iter > 0L) {
-    boot_out <- bootstrap_gformula_effects(
-      model_store = model_store,
-      person_weeks = person_weeks,
-      data_base = data_base,
-      wide_exposicion_natural = wide_exposicion_natural,
-      wide_exposicion_intervention = wide_exposicion_intervention,
-      wide_tad_obs = wide_tad_obs,
-      risk_weeks_vec = risk_weeks_vec,
-      control_vars = control_vars,
-      total_births = total_births,
-      dependent_var = dependent_var,
-      risk_entry_week = risk_entry_week,
-      boot_iter = boot_iter,
-      boot_seed = boot_seed,
-      target_week = target_week,
-      parallel = parallel
-    )
-    weekly_ci <- dplyr::left_join(weekly_effects, boot_out$weekly_ci, by = "week")
-    population_ci <- dplyr::left_join(population_effects, boot_out$population_ci, by = "scenario")
+    if (is.null(dir_bootstrap)) {
+      stop("run_gform_intervention: se requiere dir_bootstrap para bootstrap secuencial.")
+    }
+    block <- gform_time_block(paste0("Bootstrap paramétrico (", boot_iter, " iteraciones)"), {
+      boot_out <- bootstrap_gformula_effects(
+        model_store = model_store,
+        person_weeks = person_weeks,
+        cox_frame_natural = cox_frame_natural,
+        cox_frame_intervention = cox_frame_intervention,
+        risk_weeks_vec = risk_weeks_vec,
+        total_births = total_births,
+        output_stub = intervention_spec$output_stub,
+        dir_bootstrap = dir_bootstrap,
+        dependent_var = dependent_var,
+        risk_entry_week = risk_entry_week,
+        boot_iter = boot_iter,
+        boot_seed = boot_seed,
+        target_week = target_week,
+        resume = bootstrap_resume,
+        parallel = parallel_bootstrap
+      )
+      weekly_ci <- dplyr::left_join(weekly_effects, boot_out$weekly_ci, by = "week")
+      population_ci <- dplyr::left_join(
+        population_effects,
+        boot_out$population_ci |>
+          dplyr::select(
+            "scenario",
+            dplyr::ends_with("_lcl"),
+            dplyr::ends_with("_ucl")
+          ),
+        by = "scenario"
+      )
+      rm(boot_out$weekly_boot, boot_out$population_boot)
+      gc(verbose = FALSE)
+      list(
+        boot_out = boot_out,
+        weekly_ci = weekly_ci,
+        population_ci = population_ci
+      )
+    })
+    timing <- gform_timing_log_add(timing, block$timing)
+    boot_out <- block$result$boot_out
+    weekly_ci <- block$result$weekly_ci
+    population_ci <- block$result$population_ci
   }
 
-  figure4 <- NULL
-  if (run_figure4) {
-    figure4 <- compute_figure4_heatmap(
-      model_store = model_store,
-      person_weeks = person_weeks,
-      data_base = data_base,
-      raw_wide_pollutant = raw_pm,
-      pollutant = pollutant,
-      wide_tad_obs = wide_tad_obs,
-      wide_exposicion_natural = wide_exposicion_natural,
-      risk_weeks_vec = risk_weeks_vec,
-      control_vars = control_vars,
-      parallel = parallel
+  rm(cox_frame_intervention)
+  gc(verbose = FALSE)
+
+  singleweek_intervention_heatmap <- NULL
+  if (run_singleweek_heatmap) {
+    block <- gform_time_block(
+      paste0("Mapa calor semana única (", length(GFORM_DEFAULTS$weeks_exposure), " columnas)"),
+      {
+        compute_singleweek_intervention_heatmap(
+          model_store = model_store,
+          person_weeks = person_weeks,
+          data_base = data_base,
+          raw_wide_pollutant = raw_wide_pollutant,
+          pollutant = pollutant,
+          wide_tad_obs = wide_tad_obs,
+          risk_weeks_vec = risk_weeks_vec,
+          control_vars = control_vars,
+          nat_mean = nat_mean,
+          parallel = parallel_singleweek_heatmap
+        )
+      }
     )
+    timing <- gform_timing_log_add(timing, block$timing)
+    singleweek_intervention_heatmap <- block$result
   }
 
   list(
     intervention_spec = intervention_spec,
     weekly_effects = weekly_ci,
     population_effects = population_ci,
-    figure3 = figure3,
-    figure4 = figure4,
-    bootstrap = boot_out
+    cumulative_risk_curves = cumulative_risk_curves,
+    singleweek_intervention_heatmap = singleweek_intervention_heatmap,
+    figure3 = cumulative_risk_curves,
+    figure4 = singleweek_intervention_heatmap,
+    bootstrap = boot_out,
+    timing = timing
+  )
+}
+
+gform_intervention_is_complete <- function(
+    output_stub,
+    dir_weekly,
+    dir_population,
+    dir_summary,
+    dir_bootstrap,
+    boot_iter = GFORM_DEFAULTS$boot_iter) {
+
+  weekly_path <- file.path(dir_weekly, paste0(output_stub, "_weekly_effects.rds"))
+  population_path <- file.path(dir_population, paste0(output_stub, "_population_effects.rds"))
+  excel_path <- file.path(dir_summary, paste0(output_stub, "_point_estimates.xlsx"))
+  boot_ck <- gform_bootstrap_paths(output_stub, dir_bootstrap)$checkpoint
+
+  if (!all(file.exists(c(weekly_path, population_path, excel_path)))) {
+    return(FALSE)
+  }
+  if (boot_iter > 0L && file.exists(boot_ck)) {
+    ck <- readRDS(boot_ck)
+    return(isTRUE(ck$last_completed >= boot_iter))
+  }
+  boot_iter <= 0L
+}
+
+gform_load_email_config <- function(secrets_dir = ".secrets") {
+  env_path <- file.path(secrets_dir, "gmail.env")
+  cfg <- list(
+    from = Sys.getenv("GFORM_GMAIL_FROM", "jo.conejeros@gmail.com"),
+    to = Sys.getenv("GFORM_GMAIL_TO", "jdconejeros@uc.cl"),
+    app_password = Sys.getenv("GFORM_GMAIL_APP_PASSWORD", "")
+  )
+  if (file.exists(env_path)) {
+    lines <- readLines(env_path, warn = FALSE)
+    for (ln in lines) {
+      if (!nzchar(ln) || grepl("^\\s*#", ln)) next
+      parts <- strsplit(ln, "=", fixed = TRUE)[[1L]]
+      if (length(parts) < 2L) next
+      key <- trimws(parts[[1L]])
+      val <- trimws(paste(parts[-1L], collapse = "="))
+      switch(key,
+        GFORM_GMAIL_FROM = cfg$from <- val,
+        GFORM_GMAIL_TO = cfg$to <- val,
+        GFORM_GMAIL_APP_PASSWORD = cfg$app_password <- val
+      )
+    }
+  }
+  cfg
+}
+
+gform_send_email_summary <- function(
+    subject,
+    body,
+    secrets_dir = ".secrets",
+    log_path = NULL) {
+
+  cfg <- gform_load_email_config(secrets_dir)
+  sent <- FALSE
+  err_msg <- character()
+
+  if (nzchar(cfg$app_password)) {
+    sent <- tryCatch({
+      body_file <- tempfile(fileext = ".txt")
+      writeLines(body, body_file, useBytes = TRUE)
+      py_code <- sprintf(
+        paste(
+          "import smtplib, ssl",
+          "from email.message import EmailMessage",
+          "from pathlib import Path",
+          "msg = EmailMessage()",
+          "msg['Subject'] = %s",
+          "msg['From'] = %s",
+          "msg['To'] = %s",
+          "msg.set_content(Path(%s).read_text(encoding='utf-8'))",
+          "ctx = ssl.create_default_context()",
+          "with smtplib.SMTP_SSL('smtp.gmail.com', 465, context=ctx) as s:",
+          "    s.login(%s, %s)",
+          "    s.send_message(msg)",
+          sep = "\n"
+        ),
+        shQuote(subject, type = "cmd"),
+        shQuote(cfg$from, type = "cmd"),
+        shQuote(cfg$to, type = "cmd"),
+        shQuote(body_file, type = "cmd"),
+        shQuote(cfg$from, type = "cmd"),
+        shQuote(cfg$app_password, type = "cmd")
+      )
+      status <- system2("python3", c("-c", py_code), stdout = FALSE, stderr = FALSE)
+      unlink(body_file)
+      identical(status, 0L)
+    }, error = function(e) {
+      err_msg <<- c(err_msg, conditionMessage(e))
+      FALSE
+    })
+  }
+
+  if (!sent && .Platform$OS.type == "unix") {
+    esc <- function(x) gsub("\\\\", "\\\\\\\\", gsub('"', '\\"', x))
+    script <- sprintf(
+      paste(
+        "tell application \"Mail\"",
+        "  set msg to make new outgoing message with properties {subject:\"%s\", content:\"%s\", visible:false}",
+        "  tell msg",
+        "    make new to recipient at end of to recipients with properties {address:\"%s\"}",
+        "    send",
+        "  end tell",
+        "end tell",
+        sep = "\n"
+      ),
+      esc(subject), esc(body), esc(cfg$to)
+    )
+    sent <- tryCatch({
+      status <- system2("osascript", c("-e", script), stdout = FALSE, stderr = FALSE)
+      identical(status, 0L)
+    }, error = function(e) {
+      err_msg <<- c(err_msg, conditionMessage(e))
+      FALSE
+    })
+  }
+
+  if (is.null(log_path)) {
+    log_path <- file.path("02_Output/G-Form/Timing", "email_log.txt")
+  }
+  dir.create(dirname(log_path), recursive = TRUE, showWarnings = FALSE)
+  stamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+  line <- paste0(
+    "[", stamp, "] sent=", sent, " | to=", cfg$to,
+    if (length(err_msg)) paste0(" | err=", paste(err_msg, collapse = " ; ")) else "",
+    "\n", body, "\n", strrep("-", 72), "\n"
+  )
+  cat(line, file = log_path, append = TRUE)
+
+  if (!sent) {
+    message("Email no enviado (ver ", log_path, "). Configure GFORM_GMAIL_APP_PASSWORD en .secrets/gmail.env")
+  } else {
+    message("Email de resumen enviado a ", cfg$to)
+  }
+  invisible(sent)
+}
+
+gform_format_intervention_email <- function(result) {
+  tl <- result$timing_log
+  if (length(tl$phases)) {
+    timing_lines <- vapply(tl$phases, function(p) {
+      sprintf("  %-42s %8.1f s (%.1f min)", p$label, p$sec, p$sec / 60)
+    }, character(1))
+    total_sec <- tl$total_sec
+  } else {
+    timing_lines <- vapply(names(tl), function(nm) {
+      if (nm %in% c(
+        "phases", "started_at", "n_births", "n_original", "sample_frac",
+        "intervention_number", "intervention_id", "total_sec",
+        "run_parallel_cox", "run_parallel_bootstrap", "run_singleweek_heatmap",
+        "run_parallel_singleweek_heatmap", "n_workers_bootstrap"
+      )) {
+        return("")
+      }
+      if (is.numeric(tl[[nm]])) {
+        return(sprintf("  %-42s %8.1f s (%.1f min)", nm, tl[[nm]], tl[[nm]] / 60))
+      }
+      ""
+    }, character(1))
+    timing_lines <- timing_lines[nzchar(timing_lines)]
+    total_sec <- if (is.numeric(tl$total_sec)) tl$total_sec else NA_real_
+  }
+
+  paste(
+    "G-Formula — intervención completada",
+    "",
+    sprintf("Intervención %d: %s", result$intervention_number, result$intervention_id),
+    sprintf("Descripción: %s", result$description),
+    "",
+    sprintf("Prevalencia natural (sem. 36): %.6f", result$prevalence_natural),
+    sprintf("Prevalencia intervención:      %.6f", result$prevalence_intervention),
+    sprintf("Risk difference:               %.6f", result$risk_difference),
+    "",
+    "Tiempos:",
+    paste(timing_lines, collapse = "\n"),
+    "",
+    sprintf("Tiempo total: %.1f min", total_sec / 60),
+    "",
+    "Outputs:",
+    paste(" ", result$output_files, collapse = "\n"),
+    sep = "\n"
   )
 }
 
@@ -1011,6 +1916,10 @@ save_results <- function(
     population_effects,
     weekly_path,
     population_path,
+    cumulative_risk_curves = NULL,
+    cumulative_risk_curves_path = NULL,
+    singleweek_intervention_heatmap = NULL,
+    singleweek_intervention_heatmap_path = NULL,
     figure3 = NULL,
     figure3_path = NULL,
     figure4 = NULL,
@@ -1018,6 +1927,11 @@ save_results <- function(
     weekly_boot = NULL,
     population_boot = NULL,
     metadata = list()) {
+
+  cumulative_risk_curves <- cumulative_risk_curves %||% figure3
+  cumulative_risk_curves_path <- cumulative_risk_curves_path %||% figure3_path
+  singleweek_intervention_heatmap <- singleweek_intervention_heatmap %||% figure4
+  singleweek_intervention_heatmap_path <- singleweek_intervention_heatmap_path %||% figure4_path
 
   weekly_obj <- c(
     list(point = weekly_effects, bootstrap = weekly_boot),
@@ -1033,13 +1947,27 @@ save_results <- function(
   saveRDS(weekly_obj, weekly_path)
   saveRDS(population_obj, population_path)
 
-  if (!is.null(figure3) && !is.null(figure3_path)) {
-    dir.create(dirname(figure3_path), recursive = TRUE, showWarnings = FALSE)
-    saveRDS(c(list(point = figure3), metadata), figure3_path)
+  if (!is.null(cumulative_risk_curves) && !is.null(cumulative_risk_curves_path)) {
+    dir.create(dirname(cumulative_risk_curves_path), recursive = TRUE, showWarnings = FALSE)
+    desc <- attr(cumulative_risk_curves, "description")
+    saveRDS(c(
+      list(
+        point = cumulative_risk_curves,
+        description = desc
+      ),
+      metadata
+    ), cumulative_risk_curves_path)
   }
-  if (!is.null(figure4) && !is.null(figure4_path)) {
-    dir.create(dirname(figure4_path), recursive = TRUE, showWarnings = FALSE)
-    saveRDS(c(list(point = figure4), metadata), figure4_path)
+  if (!is.null(singleweek_intervention_heatmap) && !is.null(singleweek_intervention_heatmap_path)) {
+    dir.create(dirname(singleweek_intervention_heatmap_path), recursive = TRUE, showWarnings = FALSE)
+    desc <- attr(singleweek_intervention_heatmap, "description")
+    saveRDS(c(
+      list(
+        point = singleweek_intervention_heatmap,
+        description = desc
+      ),
+      metadata
+    ), singleweek_intervention_heatmap_path)
   }
 
   invisible(list(weekly = weekly_path, population = population_path))
@@ -1050,14 +1978,17 @@ save_gform_excel <- function(
     excel_path,
     intervention_id) {
 
+  curves <- results$cumulative_risk_curves %||% results$figure3
+  heatmap <- results$singleweek_intervention_heatmap %||% results$figure4
+
   sheets <- list(
     weekly_effects = results$weekly_effects,
     population_effects = results$population_effects,
-    figure3 = results$figure3
+    curvas_riesgo_acumulado_global = curves
   )
-  if (!is.null(results$figure4)) {
-    sheets$figure4_long <- results$figure4$long
-    sheets$figure4_wide <- results$figure4$wide
+  if (!is.null(heatmap)) {
+    sheets$mapa_calor_rd_semana_intervencion_long <- heatmap$long
+    sheets$mapa_calor_rd_semana_intervencion_wide <- heatmap$wide
   }
 
   dir.create(dirname(excel_path), recursive = TRUE, showWarnings = FALSE)
@@ -1065,13 +1996,21 @@ save_gform_excel <- function(
   invisible(excel_path)
 }
 
-gform_setup_parallel <- function(n_workers = NULL) {
-  if (is.null(n_workers)) {
-    n_detect <- parallel::detectCores(logical = TRUE)
-    if (!is.finite(n_detect) || n_detect < 1L) n_detect <- 4L
-    n_workers <- max(1L, n_detect - 4L)
+gform_furrr_options <- function() {
+  opts <- list(seed = TRUE)
+  if ("globals.onReference" %in% names(formals(furrr::furrr_options))) {
+    opts$globals.onReference <- "ignore"
   }
-  future::plan(future::multisession, workers = n_workers)
-  options(future.globals.maxSize = 16 * 1024^3)
-  invisible(n_workers)
+  do.call(furrr::furrr_options, opts)
+}
+
+gform_finalize_run <- function() {
+  if (requireNamespace("future", quietly = TRUE)) {
+    future::plan(future::sequential)
+  }
+  if (requireNamespace("data.table", quietly = TRUE)) {
+    data.table::setDTthreads(1L)
+  }
+  gc(verbose = FALSE)
+  invisible(NULL)
 }

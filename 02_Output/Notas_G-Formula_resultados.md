@@ -6,14 +6,12 @@ Documentación del pipeline `10.0` / `10.1` / `10.2`. Implementación en `00_Cod
 
 ## 1. Contexto
 
-| Elemento | Definición |
-|----------|------------|
-| **Evento** | Parto pretérmino: `birth_preterm = 1` si edad gestacional al parto `< 37` semanas |
-| **Cohortes** | Nacimientos con `weeks ≥ 28` (filtro en procesamiento de datos) |
-| **Modelo base** | Cox proporcional por semana de exposición, alineado con `9.0 DLM_pollution.R` |
-| **Entrada al riesgo** | Semana 28 -> `Surv(tstart = 28, weeks, birth_preterm)` |
-| **Semanas de riesgo** | `t = 1, …, 36` (`risk_weeks`); antes de la semana 28 no hay evento |
-| **Contraste** | Curso natural (exposición observada) vs. escenario de intervención contrafactual |
+| Elemento                    | Definición                                                                           |
+| --------------------------- | ------------------------------------------------------------------------------------- |
+| **Evento**            | Parto pretérmino:`birth_preterm = 1` si edad gestacional al parto `< 37` semanas |
+| **Entrada al riesgo** | Semana 28 ->`Surv(tstart = 28, weeks, birth_preterm)`                               |
+| **Semanas de riesgo** | `t = 1, …, 36` (`risk_weeks`); antes de la semana 28 no hay evento               |
+| **Contraste**         | Curso natural (exposición observada) vs. escenario de intervención contrafactual    |
 
 **Outputs principales**
 
@@ -32,6 +30,7 @@ Para la persona $i$ y la semana gestacional $w$, denotamos $X_{iw}$ la concentra
 ### 2.2 Lag ponderado (DLM)
 
 Para semanas $w \geq 2$:
+
 $$
 L_{iw} = \sum_{s=1}^{w-1} \frac{X_{is}}{w - s}
 $$
@@ -172,14 +171,14 @@ $$
 \mathrm{RD}(t) = \overline{R}_{\mathrm{int}}(t) - \overline{R}_{\mathrm{nat}}(t)
 $$
 
-| Columna Excel | Fórmula / contenido |
-|---------------|---------------------|
-| `week` | Semana de seguimiento $t$ |
-| `risk_natural` | $\overline{R}_{\mathrm{nat}}(t)$ |
-| `risk_intervention` | $\overline{R}_{\mathrm{int}}(t)$ |
-| `risk_ratio` | $\mathrm{RR}(t)$; NA si $\overline{R}_{\mathrm{nat}}(t) = 0$ |
-| `risk_difference` | $\mathrm{RD}(t)$ |
-| `*_lcl`, `*_ucl` | Percentiles 2.5 y 97.5 del bootstrap (200 réplicas) |
+| Columna Excel         | Fórmula / contenido                                             |
+| --------------------- | ---------------------------------------------------------------- |
+| `week`              | Semana de seguimiento$t$                                       |
+| `risk_natural`      | $\overline{R}_{\mathrm{nat}}(t)$                               |
+| `risk_intervention` | $\overline{R}_{\mathrm{int}}(t)$                               |
+| `risk_ratio`        | $\mathrm{RR}(t)$; NA si $\overline{R}_{\mathrm{nat}}(t) = 0$ |
+| `risk_difference`   | $\mathrm{RD}(t)$                                               |
+| `*_lcl`, `*_ucl`  | Percentiles 2.5 y 97.5 del bootstrap (200 réplicas)             |
 
 **Interpretación sustantiva:** en la semana $t$, qué fracción de la cohorte (entre quienes siguen embarazadas en $t$) habría acumulado un parto pretérmino hasta entonces bajo cada escenario. Valores en escala 0–1 (0,032 = 3,2 %).
 
@@ -219,16 +218,24 @@ $$
 \mathrm{AR} = \hat{P}^{(\mathrm{nat})} - \hat{P}^{(\mathrm{int})} = -\mathrm{RD}_{\mathrm{global}}
 $$
 
-| Columna | Fórmula | Interpretación |
-|---------|---------|----------------|
-| `scenario` | `observed` / `intervention` | Escenario evaluado |
-| `prevalence` | $\hat{P}^{(s)}$ | Probabilidad poblacional simulada de PTB acumulado hasta la semana 36 |
-| `cases` | $\hat{C}^{(s)}$ | Número esperado de casos de PTB en la cohorte |
-| `risk_ratio` | $\mathrm{RR}_{\mathrm{global}}$ | Cuántas veces mayor/menor es el riesgo acumulado con intervención |
-| `risk_difference` | $\mathrm{RD}_{\mathrm{global}}$ | Cambio absoluto en probabilidad acumulada (puntos proporcionales) |
-| `attributable_risk` | $\mathrm{AR}$ | Riesgo proporcional evitado por la intervención (positivo = beneficio) |
+| Columna               | Fórmula                          | Interpretación                                                         |
+| --------------------- | --------------------------------- | ----------------------------------------------------------------------- |
+| `scenario`          | `observed` / `intervention`   | Escenario evaluado                                                      |
+| `prevalence`        | $\hat{P}^{(s)}$                 | Probabilidad poblacional simulada de PTB acumulado hasta la semana 36   |
+| `cases`             | $\hat{C}^{(s)}$                 | Número esperado de casos de PTB en la cohorte                          |
+| `risk_ratio`        | $\mathrm{RR}_{\mathrm{global}}$ | Cuántas veces mayor/menor es el riesgo acumulado con intervención     |
+| `risk_difference`   | $\mathrm{RD}_{\mathrm{global}}$ | Cambio absoluto en probabilidad acumulada (puntos proporcionales)       |
+| `attributable_risk` | $\mathrm{AR}$                   | Riesgo proporcional evitado por la intervención (positivo = beneficio) |
 
-**Ejemplo:** $\mathrm{RD}_{\mathrm{global}} = -0{,}006$ → la intervención reduciría en 0,6 puntos porcentuales la probabilidad acumulada de PTB a la semana 36. Con $$N = 7.000$$, eso equivale a unos 42 casos evitados ($0.006 \times N$).
+**Ejemplo:** $\mathrm{RD}_{\mathrm{global}} = -0{,}006$ → la intervención reduciría en 0,6 puntos porcentuales la probabilidad acumulada de PTB a la semana 36. Con 
+
+$$
+N = 7.000
+$$
+
+, eso equivale a unos 42 casos evitados (
+
+$0.006 \times N$).
 
 ---
 
@@ -244,13 +251,13 @@ $$
 \mathrm{RD}_{j,t} = \overline{R}_{\mathrm{int}, j}(t) - \overline{R}_{\mathrm{nat}}(t)
 $$
 
-| Columna | Interpretación |
-|---------|----------------|
-| `intervention_week` | Semana $j$ en que se interviene (eje X) |
-| `follow_up_week` | Semana $t$ de evaluación del riesgo acumulado (eje Y) |
-| `risk_difference` | $\mathrm{RD}_{j,t}$ |
-| `risk_natural` | $\overline{R}_{\mathrm{nat}}(t)$ |
-| `risk_intervention` | $\overline{R}_{\mathrm{int}, j}(t)$ |
+| Columna               | Interpretación                                         |
+| --------------------- | ------------------------------------------------------- |
+| `intervention_week` | Semana$j$ en que se interviene (eje X)                |
+| `follow_up_week`    | Semana$t$ de evaluación del riesgo acumulado (eje Y) |
+| `risk_difference`   | $\mathrm{RD}_{j,t}$                                   |
+| `risk_natural`      | $\overline{R}_{\mathrm{nat}}(t)$                      |
+| `risk_intervention` | $\overline{R}_{\mathrm{int}, j}(t)$                   |
 
 `figure4_wide` pivota $\mathrm{RD}_{j,t}$ con filas = `follow_up_week`, columnas = `intervention_week`.
 
@@ -303,24 +310,24 @@ Bootstrap (200×)  →  IC 95 %
 
 ## 11. Referencia rápida de signos
 
-| Condición | Interpretación |
-|-----------|----------------|
+| Condición          | Interpretación                                          |
+| ------------------- | -------------------------------------------------------- |
 | $\mathrm{RD} < 0$ | Menos PTB acumulado con intervención (efecto protector) |
-| $\mathrm{RD} > 0$ | Más PTB acumulado con intervención |
-| $\mathrm{RR} < 1$ | Riesgo relativo reducido |
-| $\mathrm{RR} > 1$ | Riesgo relativo aumentado |
+| $\mathrm{RD} > 0$ | Más PTB acumulado con intervención                     |
+| $\mathrm{RR} < 1$ | Riesgo relativo reducido                                 |
+| $\mathrm{RR} > 1$ | Riesgo relativo aumentado                                |
 | $\mathrm{AR} > 0$ | Proporción de riesgo evitada respecto del curso natural |
 
 ---
 
 ## 12. Mapa de archivos de salida
 
-| Ruta | Contenido |
-|------|-----------|
-| `Summary_results/{stub}_point_estimates.xlsx` | Hojas: `weekly_effects`, `population_effects`, `figure3`, `figure4_long`, `figure4_wide` |
-| `Other/{stub}_figure3.rds` | Tabla Figura 3 (punto) |
-| `Other/{stub}_figure4.rds` | Lista `long` + matriz `wide` Figura 4 |
-| `WeeklyEffects/{stub}_weekly_effects.rds` | Punto + bootstrap semanal completo |
-| `PopulationEffects/{stub}_population_effects.rds` | Punto + bootstrap global |
-| `Interventions/{id}.rds` | Historias de exposición intervenidas (script 10.0) |
-| `Timing/` | Registro de tiempos de ejecución |
+| Ruta                                                | Contenido                                                                                         |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `Summary_results/{stub}_point_estimates.xlsx`     | Hojas:`weekly_effects`, `population_effects`, `figure3`, `figure4_long`, `figure4_wide` |
+| `Other/{stub}_figure3.rds`                        | Tabla Figura 3 (punto)                                                                            |
+| `Other/{stub}_figure4.rds`                        | Lista `long` + matriz `wide` Figura 4                                                         |
+| `WeeklyEffects/{stub}_weekly_effects.rds`         | Punto + bootstrap semanal completo                                                                |
+| `PopulationEffects/{stub}_population_effects.rds` | Punto + bootstrap global                                                                          |
+| `Interventions/{id}.rds`                          | Historias de exposición intervenidas (script 10.0)                                               |
+| `Timing/`                                         | Registro de tiempos de ejecución                                                                 |

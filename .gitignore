@@ -61,3 +61,9 @@ rsconnect/
 02_Output/G-Form/PopulationEffects/
 02_Output/G-Form/Other/
 04_Conference/
+
+# Secrets (Gmail OAuth / app passwords — never commit)
+.secrets/
+02_Output/G-Form/Models/
+02_Output/G-Form/Bootstrap/
+servidor.txt

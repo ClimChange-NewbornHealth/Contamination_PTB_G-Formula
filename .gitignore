@@ -70,4 +70,5 @@ rsconnect/
 servidor.txt
 *.sh
 *.docx
+*.json
 00_Code/run_gform_server.sh

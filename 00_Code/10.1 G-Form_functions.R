@@ -1384,16 +1384,32 @@ compute_population_effects <- function(
   risk_df <- combined[, .(prevalence = mean(risk, na.rm = TRUE)), by = scenario]
   risk_df[, cases := prevalence * total_births]
 
-  baseline_risk <- risk_df[scenario == baseline_scenario, prevalence]
+  baseline_risk <- as.numeric(risk_df[scenario == baseline_scenario, prevalence][1L])
+  paf <- if (baseline_risk > 0) {
+    (baseline_risk - risk_df$prevalence) / baseline_risk
+  } else {
+    rep(NA_real_, nrow(risk_df))
+  }
 
   risk_df[, `:=`(
     risk_ratio = prevalence / baseline_risk,
     risk_difference = prevalence - baseline_risk,
-    attributable_risk = baseline_risk - prevalence
+    attributable_risk = baseline_risk - prevalence,
+    attributable_fraction = data.table::fifelse(
+      scenario == baseline_scenario,
+      0,
+      paf
+    )
   )]
 
   tibble::as_tibble(risk_df[, .(
-    scenario, prevalence, cases, risk_ratio, risk_difference, attributable_risk
+    scenario,
+    prevalence,
+    cases,
+    risk_ratio,
+    risk_difference,
+    attributable_risk,
+    attributable_fraction
   )])
 }
 
@@ -1770,18 +1786,56 @@ compute_bootstrap_ci <- function(weekly_boot, pop_boot) {
     risk_difference_ucl = stats::quantile(risk_difference, 0.975, na.rm = TRUE)
   ), by = "week"]
 
-  pop_ci <- pop_boot[, .(
-    prevalence_lcl = stats::quantile(prevalence, 0.025, na.rm = TRUE),
-    prevalence_ucl = stats::quantile(prevalence, 0.975, na.rm = TRUE),
-    risk_ratio_lcl = stats::quantile(risk_ratio, 0.025, na.rm = TRUE),
-    risk_ratio_ucl = stats::quantile(risk_ratio, 0.975, na.rm = TRUE),
-    risk_difference_lcl = stats::quantile(risk_difference, 0.025, na.rm = TRUE),
-    risk_difference_ucl = stats::quantile(risk_difference, 0.975, na.rm = TRUE),
-    cases_lcl = stats::quantile(cases, 0.025, na.rm = TRUE),
-    cases_ucl = stats::quantile(cases, 0.975, na.rm = TRUE),
-    attributable_risk_lcl = stats::quantile(attributable_risk, 0.025, na.rm = TRUE),
-    attributable_risk_ucl = stats::quantile(attributable_risk, 0.975, na.rm = TRUE)
-  ), by = "scenario"]
+  pop_ci <- pop_boot[, {
+    out <- list(
+      prevalence_lcl = stats::quantile(prevalence, 0.025, na.rm = TRUE),
+      prevalence_ucl = stats::quantile(prevalence, 0.975, na.rm = TRUE),
+      risk_ratio_lcl = stats::quantile(risk_ratio, 0.025, na.rm = TRUE),
+      risk_ratio_ucl = stats::quantile(risk_ratio, 0.975, na.rm = TRUE),
+      risk_difference_lcl = stats::quantile(risk_difference, 0.025, na.rm = TRUE),
+      risk_difference_ucl = stats::quantile(risk_difference, 0.975, na.rm = TRUE),
+      cases_lcl = stats::quantile(cases, 0.025, na.rm = TRUE),
+      cases_ucl = stats::quantile(cases, 0.975, na.rm = TRUE),
+      attributable_risk_lcl = stats::quantile(attributable_risk, 0.025, na.rm = TRUE),
+      attributable_risk_ucl = stats::quantile(attributable_risk, 0.975, na.rm = TRUE)
+    )
+    if ("attributable_fraction" %in% names(pop_boot)) {
+      out$attributable_fraction_lcl <- stats::quantile(
+        attributable_fraction, 0.025, na.rm = TRUE
+      )
+      out$attributable_fraction_ucl <- stats::quantile(
+        attributable_fraction, 0.975, na.rm = TRUE
+      )
+    }
+    out
+  }, by = "scenario"]
+
+  if (!"attributable_fraction" %in% names(pop_boot)) {
+    paf_by_iter <- pop_boot[, {
+      nat_prev <- prevalence[scenario == "observed"][1L]
+      int_prev <- prevalence[scenario == "intervention"][1L]
+      paf_val <- if (is.finite(nat_prev) && nat_prev > 0) {
+        (nat_prev - int_prev) / nat_prev
+      } else {
+        NA_real_
+      }
+      .(attributable_fraction = paf_val)
+    }, by = "iter"]
+
+    paf_lcl <- stats::quantile(paf_by_iter$attributable_fraction, 0.025, na.rm = TRUE)
+    paf_ucl <- stats::quantile(paf_by_iter$attributable_fraction, 0.975, na.rm = TRUE)
+
+    pop_ci[, attributable_fraction_lcl := NA_real_]
+    pop_ci[, attributable_fraction_ucl := NA_real_]
+    pop_ci[scenario == "observed", `:=`(
+      attributable_fraction_lcl = 0,
+      attributable_fraction_ucl = 0
+    )]
+    pop_ci[scenario == "intervention", `:=`(
+      attributable_fraction_lcl = as.numeric(paf_lcl),
+      attributable_fraction_ucl = as.numeric(paf_ucl)
+    )]
+  }
 
   list(
     weekly_ci = tibble::as_tibble(weekly_ci),

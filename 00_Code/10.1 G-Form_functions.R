@@ -36,42 +36,286 @@ GFORM_DEFAULTS <- list(
 ## Paralelismo (servidor Linux / local) ----
 
 gform_detect_ram_gb <- function() {
-  if (.Platform$OS.type == "unix" && file.exists("/proc/meminfo")) {
-    memtotal <- grep("^MemTotal:", readLines("/proc/meminfo", warn = FALSE), value = TRUE)
-    if (length(memtotal)) {
-      kb <- as.numeric(sub("[^0-9]", "", memtotal[1L]))
-      if (is.finite(kb)) return(kb / 1024^2)
-    }
+  parse_kb <- function(line) {
+    if (!length(line) || !nzchar(line)) return(NA_real_)
+    m <- regexpr("[0-9]+", line, perl = TRUE)
+    if (m[1L] < 0) return(NA_real_)
+    kb <- suppressWarnings(as.numeric(substring(line, m[1L], m[1L] + attr(m, "match.length") - 1L)))
+    if (!is.finite(kb)) return(NA_real_)
+    kb / 1024 / 1024
   }
+
+  if (.Platform$OS.type == "unix" && file.exists("/proc/meminfo")) {
+    lines <- readLines("/proc/meminfo", warn = FALSE)
+    memtotal <- grep("^MemTotal:", lines, value = TRUE)
+    gb <- parse_kb(memtotal[1L])
+    if (is.finite(gb)) return(gb)
+  }
+
+  gb <- tryCatch({
+    out <- system2("getconf", c("_PHYS_PAGES"), stdout = TRUE, stderr = FALSE)
+    psize <- system2("getconf", c("PAGE_SIZE"), stdout = TRUE, stderr = FALSE)
+    if (length(out) && length(psize)) {
+      as.numeric(out[1]) * as.numeric(psize[1]) / 1024^3
+    } else {
+      NA_real_
+    }
+  }, error = function(e) NA_real_)
+  if (is.finite(gb)) return(gb)
+
+  gb <- tryCatch({
+    out <- system2("free", c("-g", "--si"), stdout = TRUE, stderr = FALSE)
+    mem_line <- grep("^Mem:", out, value = TRUE)
+    if (!length(mem_line)) return(NA_real_)
+    parts <- strsplit(trimws(mem_line[1L]), "\\s+")[[1L]]
+    if (length(parts) >= 2L) as.numeric(parts[2L]) else NA_real_
+  }, error = function(e) NA_real_)
+  if (is.finite(gb)) return(gb)
+
   NA_real_
 }
 
-gform_is_linux_server <- function() {
-  .Platform$OS.type == "unix" &&
-    identical(Sys.info()[["sysname"]], "Linux") &&
-    parallel::detectCores(logical = TRUE) >= 8L
+gform_env_num <- function(name, default = NA_real_) {
+  val <- Sys.getenv(name, unset = "")
+  if (!nzchar(val)) return(default)
+  out <- suppressWarnings(as.numeric(val))
+  if (is.finite(out)) out else default
+}
+
+gform_env_bool <- function(name, default = FALSE) {
+  val <- tolower(trimws(Sys.getenv(name, unset = "")))
+  if (!nzchar(val)) return(isTRUE(default))
+  val %in% c("1", "true", "yes", "on")
+}
+
+gform_env_int_vec <- function(name, default = NULL) {
+  val <- trimws(Sys.getenv(name, unset = ""))
+  if (!nzchar(val)) return(default)
+  parts <- strsplit(val, "[,;\\s]+")[[1L]]
+  parts <- parts[nzchar(parts)]
+  out <- suppressWarnings(as.integer(parts))
+  out <- out[!is.na(out)]
+  if (!length(out)) default else out
+}
+
+gform_run_fingerprint <- function(
+    output_stub,
+    boot_iter,
+    boot_seed,
+    total_births,
+    sample_frac = NULL) {
+  list(
+    output_stub = output_stub,
+    boot_iter = as.integer(boot_iter),
+    boot_seed = as.integer(boot_seed),
+    n_births = as.integer(total_births),
+    sample_frac = sample_frac
+  )
+}
+
+gform_fingerprint_matches <- function(saved, current) {
+  if (is.null(saved) || is.null(current)) return(FALSE)
+  keys <- c("output_stub", "boot_iter", "boot_seed", "n_births", "sample_frac")
+  for (k in keys) {
+    a <- saved[[k]]
+    b <- current[[k]]
+    if (identical(a, NULL) && identical(b, NULL)) next
+    if (is.numeric(a) && is.numeric(b)) {
+      if (!isTRUE(all.equal(a, b))) return(FALSE)
+    } else if (!identical(a, b)) {
+      return(FALSE)
+    }
+  }
+  TRUE
+}
+
+gform_point_checkpoint_path <- function(output_stub, dir_bootstrap) {
+  file.path(dir_bootstrap, output_stub, "point_checkpoint.rds")
+}
+
+gform_save_point_checkpoint <- function(
+    path,
+    fingerprint,
+    weekly_effects,
+    population_effects,
+    cumulative_risk_curves,
+    nat_mean) {
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  saveRDS(c(
+    fingerprint,
+    list(
+      weekly_effects = weekly_effects,
+      population_effects = population_effects,
+      cumulative_risk_curves = cumulative_risk_curves,
+      nat_mean = nat_mean,
+      saved_at = Sys.time()
+    )
+  ), path)
+  invisible(path)
+}
+
+gform_read_point_checkpoint <- function(path, fingerprint) {
+  if (!file.exists(path)) return(NULL)
+  pt <- tryCatch(readRDS(path), error = function(e) NULL)
+  if (is.null(pt)) return(NULL)
+  fp <- pt[c("output_stub", "boot_iter", "boot_seed", "n_births", "sample_frac")]
+  if (!gform_fingerprint_matches(fp, fingerprint)) {
+    message("Checkpoint de punto estimado incompatible; se recalculará.")
+    return(NULL)
+  }
+  pt
+}
+
+gform_bootstrap_ck_matches <- function(ck, fingerprint) {
+  if (is.null(ck)) return(FALSE)
+  if (!"output_stub" %in% names(ck)) {
+    return(
+      identical(as.integer(ck$boot_iter), as.integer(fingerprint$boot_iter)) &&
+        identical(as.integer(ck$boot_seed), as.integer(fingerprint$boot_seed))
+    )
+  }
+  fp <- ck[c("output_stub", "boot_iter", "boot_seed", "n_births", "sample_frac")]
+  gform_fingerprint_matches(fp, fingerprint)
+}
+
+gform_save_bootstrap_checkpoint <- function(path, fingerprint, last_completed) {
+  saveRDS(c(
+    fingerprint,
+    list(
+      last_completed = as.integer(last_completed),
+      updated_at = Sys.time()
+    )
+  ), path)
+  invisible(path)
+}
+
+gform_clear_intervention_checkpoints <- function(output_stub, dir_bootstrap) {
+  paths <- gform_bootstrap_paths(output_stub, dir_bootstrap)
+  for (p in c(
+    paths$checkpoint,
+    paths$weekly,
+    paths$population,
+    gform_point_checkpoint_path(output_stub, dir_bootstrap)
+  )) {
+    if (file.exists(p)) file.remove(p)
+  }
+  invisible(NULL)
+}
+
+gform_subsample_data_long <- function(data_long, sample_frac, sample_seed = 2026L) {
+  if (is.null(sample_frac) || !is.finite(sample_frac) ||
+      sample_frac <= 0 || sample_frac >= 1) {
+    return(data_long)
+  }
+  ids <- unique(data_long$id)
+  n_keep <- max(1L, floor(length(ids) * sample_frac))
+  set.seed(sample_seed)
+  ids_keep <- sample(ids, n_keep)
+  out <- data_long[data_long$id %in% ids_keep, , drop = FALSE]
+  message(
+    "Submuestra ", round(100 * sample_frac, 2), "%: ",
+    n_keep, " / ", length(ids), " nacimientos"
+  )
+  out
 }
 
 gform_parallel_config <- function(
     n_cores = parallel::detectCores(logical = TRUE),
     ram_gb = gform_detect_ram_gb(),
     reserve_cores = 4L,
-    reserve_ram_gb = 16L) {
+    reserve_ram_gb = NULL) {
 
   if (!is.finite(n_cores) || n_cores < 1L) n_cores <- 4L
-  if (!is.finite(ram_gb)) ram_gb <- 16L
+  if (!is.finite(ram_gb)) {
+    ram_gb <- gform_env_num("GFORM_RAM_GB", 16L)
+    if (!is.finite(ram_gb)) ram_gb <- 16L
+    message("RAM no detectada; usando fallback ", ram_gb, " GiB (export GFORM_RAM_GB para fijar).")
+  } else {
+    ram_override <- gform_env_num("GFORM_RAM_GB", NA_real_)
+    if (is.finite(ram_override)) ram_gb <- ram_override
+  }
+  if (is.null(reserve_ram_gb)) {
+    reserve_ram_gb <- as.integer(gform_env_num("GFORM_RESERVE_RAM_GB", 24L))
+  }
 
   n_usable <- max(1L, n_cores - reserve_cores)
   ram_usable <- max(8L, ram_gb - reserve_ram_gb)
 
   n_cox <- min(9L, n_usable)
-  n_heatmap <- min(24L, n_usable)
   n_build <- min(11L, n_usable)
-  n_bootstrap <- min(
-    max(4L, floor(ram_usable / 6L)),
-    max(8L, floor(n_usable * 0.75)),
-    20L
+
+  # Heatmap (fork): cada worker corre predict_weekly_hazards sobre cohorte completa (~12+ GiB).
+  heatmap_ram_per_worker <- as.integer(
+    gform_env_num("GFORM_HEATMAP_RAM_PER_WORKER_GB", 14L)
   )
+  heatmap_max_workers <- as.integer(
+    gform_env_num("GFORM_HEATMAP_MAX_WORKERS", 4L)
+  )
+  heatmap_workers_override <- gform_env_num("GFORM_HEATMAP_WORKERS", NA_real_)
+  heatmap_parent_reserve_gb <- max(
+    as.integer(reserve_ram_gb),
+    40L,
+    floor(ram_gb * 0.40)
+  )
+  n_heatmap_by_ram <- max(
+    1L,
+    floor((ram_gb - heatmap_parent_reserve_gb) / heatmap_ram_per_worker)
+  )
+  n_heatmap <- min(
+    heatmap_max_workers,
+    n_heatmap_by_ram,
+    max(1L, floor(n_usable * 0.25))
+  )
+  if (is.finite(heatmap_workers_override)) {
+    n_heatmap <- max(1L, min(as.integer(heatmap_workers_override), n_usable))
+  }
+  heatmap_batch_size <- as.integer(
+    gform_env_num("GFORM_HEATMAP_BATCH_SIZE", n_heatmap)
+  )
+  heatmap_batch_size <- max(1L, min(heatmap_batch_size, n_heatmap))
+
+  # Bootstrap (fork): reservar RAM para el padre (model_store + frames; COW bajo carga).
+  bootstrap_ram_per_worker <- as.integer(
+    gform_env_num("GFORM_BOOTSTRAP_RAM_PER_WORKER_GB", 8L)
+  )
+  bootstrap_max_workers <- as.integer(
+    gform_env_num("GFORM_BOOTSTRAP_MAX_WORKERS", 8L)
+  )
+  bootstrap_workers_override <- gform_env_num("GFORM_BOOTSTRAP_WORKERS", NA_real_)
+  parent_reserve_gb <- max(
+    as.integer(reserve_ram_gb),
+    36L,
+    floor(ram_gb * 0.35)
+  )
+  n_bootstrap_by_ram <- max(
+    1L,
+    floor((ram_gb - parent_reserve_gb) / bootstrap_ram_per_worker)
+  )
+  n_bootstrap <- min(
+    bootstrap_max_workers,
+    n_bootstrap_by_ram,
+    max(2L, floor(n_usable * 0.75))
+  )
+  if (is.finite(bootstrap_workers_override)) {
+    n_bootstrap <- max(1L, min(as.integer(bootstrap_workers_override), n_usable))
+  }
+
+  globals_env <- gform_env_num("GFORM_GLOBALS_MAX_GB", NA_real_)
+  globals_max_gb <- if (is.finite(globals_env)) {
+    as.integer(globals_env)
+  } else if (gform_is_linux_server()) {
+    min(128L, max(64L, ceiling(ram_gb * 0.85)))
+  } else {
+    min(80L, max(48L, floor(ram_usable * 0.65)))
+  }
+  globals_max_gb_bootstrap <- if (is.finite(globals_env)) {
+    as.integer(globals_env)
+  } else if (gform_is_linux_server()) {
+    # Con multicore/fork el chequeo de tamaño es conservador; objetos ~40 GiB son normales.
+    min(128L, max(64L, ceiling(ram_gb * 0.90)))
+  } else {
+    globals_max_gb
+  }
 
   list(
     n_cores = n_cores,
@@ -81,11 +325,23 @@ gform_parallel_config <- function(
     n_workers_heatmap = n_heatmap,
     n_workers_build = n_build,
     n_workers_default = min(n_bootstrap, n_usable),
-    globals_max_gb = min(80L, max(16L, floor(ram_usable * 0.65))),
-    bootstrap_batch_size = min(20L, n_bootstrap),
+    globals_max_gb = globals_max_gb,
+    globals_max_gb_bootstrap = globals_max_gb_bootstrap,
+    bootstrap_batch_size = n_bootstrap,
+    bootstrap_parent_reserve_gb = parent_reserve_gb,
+    bootstrap_ram_per_worker_gb = bootstrap_ram_per_worker,
+    heatmap_batch_size = heatmap_batch_size,
+    heatmap_parent_reserve_gb = heatmap_parent_reserve_gb,
+    heatmap_ram_per_worker_gb = heatmap_ram_per_worker,
     use_fork = gform_is_linux_server(),
     dt_threads = max(1L, n_cores - 2L)
   )
+}
+
+gform_is_linux_server <- function() {
+  .Platform$OS.type == "unix" &&
+    identical(Sys.info()[["sysname"]], "Linux") &&
+    parallel::detectCores(logical = TRUE) >= 8L
 }
 
 gform_setup_parallel <- function(
@@ -108,9 +364,21 @@ gform_setup_parallel <- function(
       default = config$n_workers_default
     )
   }
-  if (is.null(globals_max_gb)) globals_max_gb <- config$globals_max_gb
+  if (is.null(globals_max_gb)) {
+    globals_max_gb <- if (task == "bootstrap" && !is.null(config$globals_max_gb_bootstrap)) {
+      config$globals_max_gb_bootstrap
+    } else {
+      config$globals_max_gb
+    }
+  }
 
-  options(future.globals.maxSize = globals_max_gb * 1024^3)
+  # Linux fork: el límite de 16 GiB de future bloquea model_store ~40 GiB sin copiarlos.
+  if (task == "bootstrap" && isTRUE(config$use_fork)) {
+    globals_max_gb <- max(globals_max_gb, 64L)
+    options(future.globals.maxSize = globals_max_gb * 1024^3)
+  } else {
+    options(future.globals.maxSize = globals_max_gb * 1024^3)
+  }
 
   if (isTRUE(config$use_fork) && requireNamespace("future", quietly = TRUE)) {
     future::plan(future::multicore, workers = n_workers)
@@ -882,13 +1150,18 @@ fit_cox_one_week <- function(
 
 slim_coxph_model_store_entry <- function(entry) {
   if (is.null(entry) || is.null(entry$model)) return(entry)
-  entry$model$x <- NULL
-  entry$model$y <- NULL
-  entry$model$residuals <- NULL
-  entry$model$linear.predictors <- NULL
-  entry$model$means <- NULL
-  entry$model$weights <- NULL
-  entry$model$offset <- NULL
+  m <- entry$model
+  m$x <- NULL
+  m$y <- NULL
+  m$residuals <- NULL
+  m$linear.predictors <- NULL
+  m$means <- NULL
+  m$weights <- NULL
+  m$offset <- NULL
+  m$model <- NULL
+  m$na.action <- NULL
+  m$call <- NULL
+  entry$model <- m
   entry
 }
 
@@ -1139,13 +1412,33 @@ compute_singleweek_intervention_heatmap <- function(
     pct = GFORM_DEFAULTS$figure4_pct,
     dependent_var = GFORM_DEFAULTS$dependent_var,
     risk_entry_week = GFORM_DEFAULTS$risk_entry_week,
-    parallel = FALSE) {
+    output_stub,
+    dir_heatmap,
+    total_births,
+    sample_frac = NULL,
+    resume = TRUE,
+    parallel = FALSE,
+    heatmap_batch_size = NULL) {
 
   single_intervention <- list(type = "pct_reduce", pct = pct)
+  n_cols <- length(intervention_weeks)
 
   if (is.null(nat_mean)) {
     stop("compute_singleweek_intervention_heatmap: se requiere nat_mean (riesgo acumulado medio bajo curso natural).")
   }
+  if (is.null(output_stub) || is.null(dir_heatmap)) {
+    stop("compute_singleweek_intervention_heatmap: se requiere output_stub y dir_heatmap.")
+  }
+
+  paths <- gform_heatmap_paths(output_stub, dir_heatmap)
+  dir.create(paths$dir, recursive = TRUE, showWarnings = FALSE)
+  fingerprint <- gform_heatmap_fingerprint(
+    output_stub = output_stub,
+    pct = pct,
+    total_births = total_births,
+    sample_frac = sample_frac,
+    follow_up_weeks = follow_up_weeks
+  )
 
   compute_one_col <- function(iw) {
     wide_cf <- build_exposicion_wide_from_raw(
@@ -1181,34 +1474,122 @@ compute_singleweek_intervention_heatmap <- function(
              .(intervention_week, follow_up_week, risk_difference, risk_natural, risk_intervention)]
   }
 
-  if (parallel && length(intervention_weeks) > 1L && requireNamespace("furrr", quietly = TRUE)) {
-    gform_setup_parallel(task = "heatmap")
-    pieces <- furrr::future_map(
-      intervention_weeks,
-      compute_one_col,
-      .options = gform_furrr_options()
+  finalize_heatmap <- function(long_df) {
+    wide_mat <- data.table::dcast(
+      long_df,
+      follow_up_week ~ intervention_week,
+      value.var = "risk_difference"
     )
-  } else {
-    pieces <- lapply(intervention_weeks, compute_one_col)
+    out <- list(
+      long = tibble::as_tibble(long_df),
+      wide = tibble::as_tibble(wide_mat)
+    )
+    attr(out, "description") <- paste0(
+      "Mapa de calor RD acumulado de PTB: reduccion del ",
+      round(100 * pct), "% en una sola semana gestacional (eje X) ",
+      "evaluado en semanas de seguimiento ", min(follow_up_weeks), "-", max(follow_up_weeks),
+      " (eje Y), referencia curso natural comun."
+    )
+    out
   }
 
-  long_df <- data.table::rbindlist(pieces, use.names = TRUE, fill = TRUE)
-  wide_mat <- data.table::dcast(
-    long_df,
-    follow_up_week ~ intervention_week,
-    value.var = "risk_difference"
-  )
-  out <- list(
-    long = tibble::as_tibble(long_df),
-    wide = tibble::as_tibble(wide_mat)
-  )
-  attr(out, "description") <- paste0(
-    "Mapa de calor RD acumulado de PTB: reduccion del ",
-    round(100 * pct), "% en una sola semana gestacional (eje X) ",
-    "evaluado en semanas de seguimiento ", min(follow_up_weeks), "-", max(follow_up_weeks),
-    " (eje Y), referencia curso natural comun."
-  )
-  out
+  append_one_col <- function(piece) {
+    append_mode <- file.exists(paths$long)
+    data.table::fwrite(
+      piece, paths$long,
+      append = append_mode,
+      col.names = !append_mode
+    )
+  }
+
+  completed_weeks <- integer(0)
+  if (isTRUE(resume) && file.exists(paths$checkpoint)) {
+    ck <- tryCatch(readRDS(paths$checkpoint), error = function(e) NULL)
+    if (!is.null(ck) && gform_heatmap_ck_matches(ck, fingerprint)) {
+      completed_weeks <- as.integer(ck$completed_weeks)
+      if (length(completed_weeks) >= n_cols &&
+          all(intervention_weeks %in% completed_weeks) &&
+          file.exists(paths$long)) {
+        message("Heatmap ya completo (", n_cols, " columnas); leyendo desde disco.")
+        long_df <- data.table::fread(paths$long)
+        return(finalize_heatmap(long_df))
+      }
+      if (length(completed_weeks)) {
+        next_col <- length(completed_weeks) + 1L
+        message(
+          "Heatmap: reanudando desde columna ", next_col, " / ", n_cols,
+          " (", length(completed_weeks), " columnas en checkpoint)"
+        )
+      }
+    } else {
+      message("Checkpoint heatmap incompatible; reiniciando mapa de calor.")
+      completed_weeks <- integer(0)
+    }
+  }
+
+  weeks_todo <- setdiff(intervention_weeks, completed_weeks)
+  if (!length(completed_weeks)) {
+    if (file.exists(paths$long)) file.remove(paths$long)
+    if (file.exists(paths$checkpoint)) file.remove(paths$checkpoint)
+  }
+
+  if (!length(weeks_todo)) {
+    long_df <- data.table::fread(paths$long)
+    return(finalize_heatmap(long_df))
+  }
+
+  cfg <- getOption("gform.parallel", gform_parallel_config())
+  if (is.null(heatmap_batch_size)) {
+    heatmap_batch_size <- if (parallel) cfg$heatmap_batch_size else 1L
+  }
+  heatmap_batch_size <- max(1L, as.integer(heatmap_batch_size))
+
+  col_index <- function(iw) {
+    match(iw, intervention_weeks)
+  }
+
+  if (parallel && length(weeks_todo) > 0L && requireNamespace("furrr", quietly = TRUE)) {
+    gform_setup_parallel(task = "heatmap", config = cfg)
+    message(
+      "Heatmap paralelo: lotes de ", heatmap_batch_size,
+      " columnas (", cfg$n_workers_heatmap, " workers)"
+    )
+    batch_starts <- seq(1L, length(weeks_todo), by = heatmap_batch_size)
+    for (batch_start in batch_starts) {
+      batch_end <- min(batch_start + heatmap_batch_size - 1L, length(weeks_todo))
+      batch_weeks <- weeks_todo[batch_start:batch_end]
+      batch_results <- furrr::future_map(
+        batch_weeks,
+        compute_one_col,
+        .options = gform_furrr_options()
+      )
+      for (k in seq_along(batch_weeks)) {
+        append_one_col(batch_results[[k]])
+        message("Heatmap: columna ", col_index(batch_weeks[k]), " / ", n_cols)
+      }
+      rm(batch_results)
+      gc(verbose = FALSE)
+      completed_weeks <- sort(unique(c(completed_weeks, batch_weeks)))
+      gform_save_heatmap_checkpoint(paths$checkpoint, fingerprint, completed_weeks)
+    }
+    future::plan(future::sequential)
+  } else {
+    if (isTRUE(parallel)) {
+      message("Heatmap paralelo no disponible (furrr); ejecutando secuencial.")
+    }
+    for (iw in weeks_todo) {
+      message("Heatmap: columna ", col_index(iw), " / ", n_cols)
+      piece <- compute_one_col(iw)
+      append_one_col(piece)
+      rm(piece)
+      gc(verbose = FALSE)
+      completed_weeks <- sort(unique(c(completed_weeks, iw)))
+      gform_save_heatmap_checkpoint(paths$checkpoint, fingerprint, completed_weeks)
+    }
+  }
+
+  long_df <- data.table::fread(paths$long)
+  finalize_heatmap(long_df)
 }
 
 compute_figure4_heatmap <- compute_singleweek_intervention_heatmap
@@ -1299,6 +1680,81 @@ gform_bootstrap_paths <- function(output_stub, dir_bootstrap) {
   )
 }
 
+gform_heatmap_paths <- function(output_stub, dir_heatmap) {
+  base <- file.path(dir_heatmap, output_stub)
+  list(
+    dir = base,
+    long = file.path(base, "heatmap_long.csv"),
+    checkpoint = file.path(base, "heatmap_checkpoint.rds")
+  )
+}
+
+gform_heatmap_fingerprint <- function(
+    output_stub,
+    pct,
+    total_births,
+    sample_frac,
+    follow_up_weeks) {
+  list(
+    output_stub = output_stub,
+    pct = pct,
+    n_births = as.integer(total_births),
+    sample_frac = sample_frac,
+    follow_up_min = min(follow_up_weeks),
+    follow_up_max = max(follow_up_weeks)
+  )
+}
+
+gform_heatmap_ck_matches <- function(ck, fingerprint) {
+  if (is.null(ck) || is.null(fingerprint)) return(FALSE)
+  keys <- c("output_stub", "pct", "n_births", "sample_frac", "follow_up_min", "follow_up_max")
+  for (k in keys) {
+    a <- ck[[k]]
+    b <- fingerprint[[k]]
+    if (identical(a, NULL) && identical(b, NULL)) next
+    if (is.numeric(a) && is.numeric(b)) {
+      if (!isTRUE(all.equal(a, b))) return(FALSE)
+    } else if (!identical(a, b)) {
+      return(FALSE)
+    }
+  }
+  TRUE
+}
+
+gform_save_heatmap_checkpoint <- function(path, fingerprint, completed_weeks) {
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  saveRDS(c(
+    fingerprint,
+    list(
+      completed_weeks = sort(unique(as.integer(completed_weeks))),
+      updated_at = Sys.time()
+    )
+  ), path)
+  invisible(path)
+}
+
+gform_bootstrap_is_complete <- function(
+    output_stub,
+    dir_bootstrap,
+    boot_iter,
+    boot_seed,
+    total_births,
+    sample_frac) {
+  if (boot_iter <= 0L) return(TRUE)
+  paths <- gform_bootstrap_paths(output_stub, dir_bootstrap)
+  if (!file.exists(paths$checkpoint)) return(FALSE)
+  ck <- tryCatch(readRDS(paths$checkpoint), error = function(e) NULL)
+  if (is.null(ck)) return(FALSE)
+  fp <- gform_run_fingerprint(
+    output_stub = output_stub,
+    boot_iter = boot_iter,
+    boot_seed = boot_seed,
+    total_births = total_births,
+    sample_frac = sample_frac
+  )
+  isTRUE(gform_bootstrap_ck_matches(ck, fp) && ck$last_completed >= boot_iter)
+}
+
 compute_bootstrap_ci <- function(weekly_boot, pop_boot) {
   weekly_boot <- data.table::as.data.table(weekly_boot)
   pop_boot <- data.table::as.data.table(pop_boot)
@@ -1349,6 +1805,7 @@ bootstrap_gformula_effects <- function(
     target_week = GFORM_DEFAULTS$population_week,
     baseline_scenario = GFORM_DEFAULTS$baseline_scenario,
     intervention_scenario = "intervention",
+    sample_frac = NULL,
     resume = TRUE,
     checkpoint_every = 10L,
     parallel = FALSE,
@@ -1356,6 +1813,13 @@ bootstrap_gformula_effects <- function(
 
   paths <- gform_bootstrap_paths(output_stub, dir_bootstrap)
   dir.create(paths$dir, recursive = TRUE, showWarnings = FALSE)
+  fingerprint <- gform_run_fingerprint(
+    output_stub = output_stub,
+    boot_iter = boot_iter,
+    boot_seed = boot_seed,
+    total_births = total_births,
+    sample_frac = sample_frac
+  )
 
   append_one_result <- function(one, iter) {
     wdt <- data.table::as.data.table(one$weekly)
@@ -1397,8 +1861,7 @@ bootstrap_gformula_effects <- function(
   start_iter <- 1L
   if (resume && file.exists(paths$checkpoint)) {
     ck <- readRDS(paths$checkpoint)
-    if (identical(ck$boot_iter, boot_iter) &&
-        identical(ck$boot_seed, boot_seed) &&
+    if (gform_bootstrap_ck_matches(ck, fingerprint) &&
         ck$last_completed >= boot_iter) {
       message("Bootstrap ya completo (", boot_iter, " iter); leyendo réplicas desde disco.")
       weekly_boot <- data.table::fread(paths$weekly)
@@ -1412,9 +1875,11 @@ bootstrap_gformula_effects <- function(
         population_ci = ci$population_ci
       ))
     }
-    if (identical(ck$boot_iter, boot_iter) && identical(ck$boot_seed, boot_seed)) {
+    if (gform_bootstrap_ck_matches(ck, fingerprint)) {
       start_iter <- ck$last_completed + 1L
       message("Bootstrap: reanudando desde iteración ", start_iter, " / ", boot_iter)
+    } else {
+      message("Checkpoint bootstrap incompatible; reiniciando bootstrap desde 1.")
     }
   }
 
@@ -1432,9 +1897,12 @@ bootstrap_gformula_effects <- function(
 
   if (parallel && requireNamespace("furrr", quietly = TRUE)) {
     gform_setup_parallel(task = "bootstrap", config = cfg)
+    globals_limit_gb <- getOption("future.globals.maxSize", 0) / 1024^3
     message(
       "Bootstrap paralelo: lotes de ", bootstrap_batch_size,
-      " iteraciones (", cfg$n_workers_bootstrap, " workers)..."
+      " iteraciones (", cfg$n_workers_bootstrap, " workers)",
+      " | globals max: ", round(globals_limit_gb, 1), " GiB",
+      if (isTRUE(cfg$use_fork)) " | fork/multicore" else ""
     )
     batch_starts <- seq(start_iter, boot_iter, by = bootstrap_batch_size)
     for (batch_start in batch_starts) {
@@ -1451,17 +1919,16 @@ bootstrap_gformula_effects <- function(
       rm(batch_results)
       gc(verbose = FALSE)
 
-      saveRDS(list(
-        boot_iter = boot_iter,
-        boot_seed = boot_seed,
-        last_completed = batch_end,
-        updated_at = Sys.time()
-      ), paths$checkpoint)
+      gform_save_bootstrap_checkpoint(paths$checkpoint, fingerprint, batch_end)
       message("Bootstrap checkpoint: ", batch_end, " / ", boot_iter)
     }
+    future::plan(future::sequential)
   } else {
     if (isTRUE(parallel)) {
       message("Bootstrap paralelo no disponible (furrr); ejecutando secuencial.")
+    } else {
+      message("Bootstrap secuencial: ", boot_iter, " iteraciones (checkpoint cada ",
+              checkpoint_every, ")")
     }
     for (iter in start_iter:boot_iter) {
       one <- run_one_iter(iter)
@@ -1470,12 +1937,7 @@ bootstrap_gformula_effects <- function(
       gc(verbose = FALSE)
 
       if (iter %% checkpoint_every == 0L || iter == boot_iter) {
-        saveRDS(list(
-          boot_iter = boot_iter,
-          boot_seed = boot_seed,
-          last_completed = iter,
-          updated_at = Sys.time()
-        ), paths$checkpoint)
+        gform_save_bootstrap_checkpoint(paths$checkpoint, fingerprint, iter)
         message("Bootstrap checkpoint: ", iter, " / ", boot_iter)
       }
     }
@@ -1517,14 +1979,51 @@ run_gform_intervention <- function(
     boot_iter = GFORM_DEFAULTS$boot_iter,
     boot_seed = GFORM_DEFAULTS$boot_seed,
     target_week = GFORM_DEFAULTS$population_week,
+    sample_frac = NULL,
     run_bootstrap = TRUE,
     run_singleweek_heatmap = FALSE,
     parallel_singleweek_heatmap = FALSE,
     parallel_bootstrap = FALSE,
     dir_bootstrap = NULL,
-    bootstrap_resume = TRUE) {
+    bootstrap_resume = TRUE,
+    dir_heatmap = NULL,
+    heatmap_resume = TRUE) {
 
   timing <- gform_timing_log_init()
+  fingerprint <- gform_run_fingerprint(
+    output_stub = intervention_spec$output_stub,
+    boot_iter = boot_iter,
+    boot_seed = boot_seed,
+    total_births = total_births,
+    sample_frac = sample_frac
+  )
+  if (run_bootstrap && boot_iter > 0L && !is.null(dir_bootstrap) &&
+      gform_bootstrap_is_complete(
+        output_stub = intervention_spec$output_stub,
+        dir_bootstrap = dir_bootstrap,
+        boot_iter = boot_iter,
+        boot_seed = boot_seed,
+        total_births = total_births,
+        sample_frac = sample_frac
+      )) {
+    message("Bootstrap ya completo (", boot_iter, " iter); lectura desde disco al llegar a bootstrap.")
+  }
+  point_ck_path <- if (!is.null(dir_bootstrap)) {
+    gform_point_checkpoint_path(intervention_spec$output_stub, dir_bootstrap)
+  } else {
+    NULL
+  }
+  skip_point_estimate <- FALSE
+  if (isTRUE(bootstrap_resume) && !is.null(point_ck_path)) {
+    pt_ck <- gform_read_point_checkpoint(point_ck_path, fingerprint)
+    if (!is.null(pt_ck)) {
+      skip_point_estimate <- TRUE
+      message(
+        "Reanudación: punto estimado en disco (",
+        format(pt_ck$saved_at, "%Y-%m-%d %H:%M"), "); omitiendo predicciones."
+      )
+    }
+  }
 
   block <- gform_time_block("Construir frame Cox intervención", {
     intervention_obj <- readRDS(intervention_path)
@@ -1582,6 +2081,19 @@ run_gform_intervention <- function(
   cox_frame_natural <- block$result$cox_frame_natural
   cox_frame_intervention <- block$result$cox_frame_intervention
 
+  if (isTRUE(skip_point_estimate)) {
+    pt_ck <- gform_read_point_checkpoint(point_ck_path, fingerprint)
+    nat_mean <- pt_ck$nat_mean
+    weekly_effects <- pt_ck$weekly_effects
+    cumulative_risk_curves <- pt_ck$cumulative_risk_curves
+    population_effects <- pt_ck$population_effects
+    timing <- gform_timing_log_add(timing, list(
+      label = "Punto estimado (checkpoint)",
+      start = pt_ck$saved_at,
+      end = pt_ck$saved_at,
+      sec = 0
+    ))
+  } else {
   block <- gform_time_block("Predicción hazards — curso natural", {
     predict_weekly_hazards(
       model_store = model_store,
@@ -1635,6 +2147,18 @@ run_gform_intervention <- function(
   rm(prob_natural, prob_intervention)
   gc()
 
+  if (run_bootstrap && boot_iter > 0L && !is.null(dir_bootstrap)) {
+    gform_save_point_checkpoint(
+      path = point_ck_path,
+      fingerprint = fingerprint,
+      weekly_effects = weekly_effects,
+      population_effects = population_effects,
+      cumulative_risk_curves = cumulative_risk_curves,
+      nat_mean = nat_mean
+    )
+  }
+  }
+
   boot_out <- NULL
   weekly_ci <- weekly_effects
   population_ci <- population_effects
@@ -1657,6 +2181,7 @@ run_gform_intervention <- function(
         boot_iter = boot_iter,
         boot_seed = boot_seed,
         target_week = target_week,
+        sample_frac = sample_frac,
         resume = bootstrap_resume,
         parallel = parallel_bootstrap
       )
@@ -1671,7 +2196,8 @@ run_gform_intervention <- function(
           ),
         by = "scenario"
       )
-      rm(boot_out$weekly_boot, boot_out$population_boot)
+      boot_out$weekly_boot <- NULL
+      boot_out$population_boot <- NULL
       gc(verbose = FALSE)
       list(
         boot_out = boot_out,
@@ -1690,6 +2216,9 @@ run_gform_intervention <- function(
 
   singleweek_intervention_heatmap <- NULL
   if (run_singleweek_heatmap) {
+    if (is.null(dir_heatmap)) {
+      stop("run_gform_intervention: se requiere dir_heatmap para mapa de calor.")
+    }
     block <- gform_time_block(
       paste0("Mapa calor semana única (", length(GFORM_DEFAULTS$weeks_exposure), " columnas)"),
       {
@@ -1703,6 +2232,12 @@ run_gform_intervention <- function(
           risk_weeks_vec = risk_weeks_vec,
           control_vars = control_vars,
           nat_mean = nat_mean,
+          follow_up_weeks = follow_up_weeks,
+          output_stub = intervention_spec$output_stub,
+          dir_heatmap = dir_heatmap,
+          total_births = total_births,
+          sample_frac = sample_frac,
+          resume = heatmap_resume,
           parallel = parallel_singleweek_heatmap
         )
       }
@@ -1730,7 +2265,10 @@ gform_intervention_is_complete <- function(
     dir_population,
     dir_summary,
     dir_bootstrap,
-    boot_iter = GFORM_DEFAULTS$boot_iter) {
+    boot_iter = GFORM_DEFAULTS$boot_iter,
+    boot_seed = GFORM_DEFAULTS$boot_seed,
+    total_births = NULL,
+    sample_frac = NULL) {
 
   weekly_path <- file.path(dir_weekly, paste0(output_stub, "_weekly_effects.rds"))
   population_path <- file.path(dir_population, paste0(output_stub, "_population_effects.rds"))
@@ -1742,6 +2280,12 @@ gform_intervention_is_complete <- function(
   }
   if (boot_iter > 0L && file.exists(boot_ck)) {
     ck <- readRDS(boot_ck)
+    if (!is.null(total_births)) {
+      fp <- gform_run_fingerprint(
+        output_stub, boot_iter, boot_seed, total_births, sample_frac
+      )
+      if (!gform_bootstrap_ck_matches(ck, fp)) return(FALSE)
+    }
     return(isTRUE(ck$last_completed >= boot_iter))
   }
   boot_iter <= 0L

@@ -3,25 +3,31 @@
 # Requisito previo: 10.0 G-Form_build_interventions.R (una vez)
 #
 # Uso (desde la raíz del proyecto):
-#   bash "00_Code/run_gform_server.sh"     # Ubuntu/Linux (paralelo)
+#   bash "00_Code/run_gform_server.sh"     # servidor Linux (paralelo, primer plano)
 #   Rscript "00_Code/10.2 G-Form_models.R" # respeta GFORM_EXEC_MODE
 
 rm(list = ls())
 gc(verbose = FALSE)
 
+source("00_Code/0.2 Packages_gform.R")
 source("00_Code/0.1 Settings.R")
-source("00_Code/0.2 Packages.R")
 source("00_Code/0.3 Functions.R")
 source("00_Code/10.1 G-Form_functions.R")
 
 data_inp <- "01_Data/Output/"
 data_out_g <- "02_Output/G-Form/"
-dir_interventions <- file.path(data_out_g, "Interventions")
+output_subdir <- trimws(Sys.getenv("GFORM_OUTPUT_SUBDIR", unset = ""))
+if (nzchar(output_subdir)) {
+  data_out_g <- file.path("02_Output/G-Form", output_subdir)
+  message("Outputs en subdirectorio: ", data_out_g)
+}
+dir_interventions <- file.path("02_Output/G-Form", "Interventions")
 dir_weekly <- file.path(data_out_g, "WeeklyEffects")
 dir_population <- file.path(data_out_g, "PopulationEffects")
 dir_other <- file.path(data_out_g, "Other")
 dir_models <- file.path(data_out_g, "Models")
 dir_bootstrap <- file.path(data_out_g, "Bootstrap")
+dir_heatmap <- file.path(data_out_g, "Heatmap")
 dir_summary <- file.path(data_out_g, "Summary_results")
 dir_timing <- file.path(data_out_g, "Timing")
 
@@ -36,20 +42,42 @@ parallel_config <- gform_parallel_config()
 options(gform.parallel = parallel_config)
 
 run_parallel_cox <- execution_mode == "server"
-run_parallel_bootstrap <- execution_mode == "server"
-run_parallel_singleweek_heatmap <- execution_mode == "server"
+run_parallel_bootstrap <- execution_mode == "server" &&
+  gform_env_bool("GFORM_BOOTSTRAP_PARALLEL", default = FALSE)
+run_parallel_singleweek_heatmap <- execution_mode == "server" &&
+  gform_env_bool("GFORM_HEATMAP_PARALLEL", default = FALSE)
 
-## ===== Configuración =====
-intervention_numbers <- seq_len(length(GFORM_INTERVENTION_ORDER))
-max_batch_hours <- if (execution_mode == "server") 168 else 12
-sample_frac <- NULL
-sample_seed <- 2026L
+## ===== Configuración (variables de entorno opcionales) =====
+sample_frac_env <- gform_env_num("GFORM_SAMPLE_FRAC", NA_real_)
+sample_frac <- if (is.finite(sample_frac_env) && sample_frac_env > 0 && sample_frac_env < 1) {
+  sample_frac_env
+} else {
+  NULL
+}
+sample_seed <- as.integer(gform_env_num("GFORM_SAMPLE_SEED", 2026L))
 
-run_bootstrap <- TRUE
-boot_iter <- GFORM_DEFAULTS$boot_iter
-boot_seed <- GFORM_DEFAULTS$boot_seed
-run_singleweek_heatmap <- TRUE
-skip_completed <- TRUE
+intervention_env <- gform_env_int_vec("GFORM_INTERVENTIONS", NULL)
+intervention_numbers <- if (!is.null(intervention_env)) {
+  intervention_env
+} else {
+  seq_len(length(GFORM_INTERVENTION_ORDER))
+}
+
+max_batch_hours <- as.numeric(gform_env_num(
+  "GFORM_MAX_BATCH_HOURS",
+  if (execution_mode == "server") 168 else 12
+))
+
+run_bootstrap <- gform_env_bool("GFORM_RUN_BOOTSTRAP", default = TRUE)
+boot_iter_env <- gform_env_num("GFORM_BOOT_ITER", NA_real_)
+boot_iter <- if (is.finite(boot_iter_env)) {
+  as.integer(boot_iter_env)
+} else {
+  GFORM_DEFAULTS$boot_iter
+}
+boot_seed <- as.integer(gform_env_num("GFORM_BOOT_SEED", GFORM_DEFAULTS$boot_seed))
+run_singleweek_heatmap <- gform_env_bool("GFORM_RUN_HEATMAP", default = TRUE)
+skip_completed <- gform_env_bool("GFORM_SKIP_COMPLETED", default = TRUE)
 
 max_follow_up <- GFORM_DEFAULTS$max_follow_up
 weeks_exposure <- GFORM_DEFAULTS$weeks_exposure
@@ -62,10 +90,13 @@ control_vars <- GFORM_DEFAULTS$control_vars
 dependent_var <- GFORM_DEFAULTS$dependent_var
 baseline_scenario <- GFORM_DEFAULTS$baseline_scenario
 
-load_pollutant_long <- function(pollutant) {
+load_pollutant_long <- function(pollutant, ids = NULL) {
   load(paste0(data_inp, "births_2010_2020_exposure_weeks_lagged.RData"))
   out <- data_long |>
     dplyr::select(id, week_gest_num, tad, dplyr::all_of(pollutant))
+  if (!is.null(ids)) {
+    out <- out[out$id %in% ids, , drop = FALSE]
+  }
   rm(data_long)
   gc(verbose = FALSE)
   out
@@ -91,7 +122,7 @@ run_one_gform_intervention <- function(intervention_number, shared_data) {
 
   block <- gform_time_block(
     paste0("Cargar exposición semanal — ", pollutant),
-    load_pollutant_long(pollutant)
+    load_pollutant_long(pollutant, ids = data_base$id)
   )
   timing_log <- gform_timing_log_add(timing_log, block$timing)
   data_long_weekly <- block$result
@@ -169,7 +200,10 @@ run_one_gform_intervention <- function(intervention_number, shared_data) {
     parallel_singleweek_heatmap = run_parallel_singleweek_heatmap,
     parallel_bootstrap = run_parallel_bootstrap,
     dir_bootstrap = dir_bootstrap,
-    bootstrap_resume = TRUE
+    bootstrap_resume = TRUE,
+    dir_heatmap = dir_heatmap,
+    heatmap_resume = TRUE,
+    sample_frac = sample_frac
   )
   if (!is.null(res$timing)) {
     timing_log <- gform_timing_log_merge(timing_log, res$timing)
@@ -248,6 +282,14 @@ run_one_gform_intervention <- function(intervention_number, shared_data) {
   )
   saveRDS(timing_log, timing_path)
 
+  if (file.exists(gform_point_checkpoint_path(spec$output_stub, dir_bootstrap))) {
+    file.remove(gform_point_checkpoint_path(spec$output_stub, dir_bootstrap))
+  }
+  heatmap_paths <- gform_heatmap_paths(spec$output_stub, dir_heatmap)
+  if (file.exists(heatmap_paths$checkpoint)) {
+    file.remove(heatmap_paths$checkpoint)
+  }
+
   list(
     intervention_number = intervention_number,
     intervention_id = spec$intervention_id,
@@ -283,6 +325,16 @@ on.exit(sink(), add = TRUE)
 message("\n=== G-Formula corrida (modo: ", execution_mode, ") ===")
 message("Inicio: ", batch_start)
 message("Límite: ", max_batch_hours, " h (hasta ", batch_deadline, ")")
+if (!is.null(sample_frac)) {
+  message("Submuestra: ", round(100 * sample_frac, 2), "% (seed ", sample_seed, ")")
+}
+message(
+  "Intervenciones: ",
+  paste(intervention_numbers, collapse = ", "),
+  " | bootstrap: ",
+  if (run_bootstrap) paste0(boot_iter, " iter (",
+    if (run_parallel_bootstrap) "paralelo" else "secuencial", ")") else "no"
+)
 message(
   "CPUs: ", parallel_config$n_cores,
   " | RAM: ", round(parallel_config$ram_gb, 1), " GiB",
@@ -292,7 +344,18 @@ message(
   "Workers Cox/bootstrap/heatmap: ",
   parallel_config$n_workers_cox, " / ",
   parallel_config$n_workers_bootstrap, " / ",
-  parallel_config$n_workers_heatmap
+  parallel_config$n_workers_heatmap,
+  " (bootstrap lote: ", parallel_config$bootstrap_batch_size,
+  " | heatmap lote: ", parallel_config$heatmap_batch_size, ")"
+)
+message(
+  "Bootstrap RAM: reserva padre ", parallel_config$bootstrap_parent_reserve_gb,
+  " GiB | ~", parallel_config$bootstrap_ram_per_worker_gb, " GiB/worker"
+)
+message(
+  "Heatmap RAM: reserva padre ", parallel_config$heatmap_parent_reserve_gb,
+  " GiB | ~", parallel_config$heatmap_ram_per_worker_gb, " GiB/worker",
+  " | paralelo: ", run_parallel_singleweek_heatmap
 )
 if (execution_mode == "server") {
   gform_setup_parallel(task = "default", config = parallel_config)
@@ -330,9 +393,21 @@ block <- gform_time_block("Cargar cohorte base", {
 })
 batch_timing <- gform_timing_log_add(batch_timing, block$timing)
 data_long <- block$result
-
 n_total_original <- dplyr::n_distinct(data_long$id)
-message("Nacimientos: ", n_total_original)
+
+if (!is.null(sample_frac)) {
+  block <- gform_time_block(
+    paste0("Submuestra ", round(100 * sample_frac, 2), "%"),
+    gform_subsample_data_long(data_long, sample_frac, sample_seed)
+  )
+  batch_timing <- gform_timing_log_add(batch_timing, block$timing)
+  data_long <- block$result
+}
+
+message("Nacimientos (análisis): ", dplyr::n_distinct(data_long$id))
+if (!is.null(sample_frac)) {
+  message("Nacimientos (cohorte original): ", n_total_original)
+}
 message("Contaminantes en lote: ", paste(pollutants_needed, collapse = ", "))
 
 block <- gform_time_block("Preparar person_weeks y TAD semanal", {
@@ -384,7 +459,10 @@ for (int_num in intervention_numbers) {
     dir_population = dir_population,
     dir_summary = dir_summary,
     dir_bootstrap = dir_bootstrap,
-    boot_iter = if (run_bootstrap) boot_iter else 0L
+    boot_iter = if (run_bootstrap) boot_iter else 0L,
+    boot_seed = boot_seed,
+    total_births = shared_data$total_births,
+    sample_frac = sample_frac
   )) {
     message("\nIntervención ", int_num, " (", spec$intervention_id, ") ya completa — omitida.")
     next

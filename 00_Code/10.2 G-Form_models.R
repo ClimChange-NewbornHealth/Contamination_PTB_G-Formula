@@ -78,6 +78,12 @@ boot_iter <- if (is.finite(boot_iter_env)) {
 boot_seed <- as.integer(gform_env_num("GFORM_BOOT_SEED", GFORM_DEFAULTS$boot_seed))
 run_singleweek_heatmap <- gform_env_bool("GFORM_RUN_HEATMAP", default = TRUE)
 skip_completed <- gform_env_bool("GFORM_SKIP_COMPLETED", default = TRUE)
+heatmap_only <- gform_env_bool("GFORM_HEATMAP_ONLY", default = FALSE)
+if (heatmap_only) {
+  message(
+    "GFORM_HEATMAP_ONLY activo: solo recalcula heatmaps cuando ya existen RDS puntuales."
+  )
+}
 
 max_follow_up <- GFORM_DEFAULTS$max_follow_up
 weeks_exposure <- GFORM_DEFAULTS$weeks_exposure
@@ -177,6 +183,18 @@ run_one_gform_intervention <- function(intervention_number, shared_data) {
     stop("RDS no encontrado (ejecutar 10.0 primero): ", intervention_path)
   }
 
+  output_paths <- gform_output_paths(spec$output_stub, dir_other)
+  weekly_path <- file.path(dir_weekly, paste0(spec$output_stub, "_weekly_effects.rds"))
+  population_path <- file.path(dir_population, paste0(spec$output_stub, "_population_effects.rds"))
+  use_heatmap_only <- isTRUE(heatmap_only) &&
+    file.exists(weekly_path) &&
+    file.exists(population_path) &&
+    file.exists(output_paths$cumulative_risk_curves) &&
+    !gform_heatmap_is_complete(spec$output_stub, dir_heatmap, dir_other)
+  if (use_heatmap_only) {
+    message("Modo heatmap_only para ", spec$output_stub, " (RDS previos + heatmap pendiente).")
+  }
+
   res <- run_gform_intervention(
     intervention_spec = spec,
     intervention_path = intervention_path,
@@ -195,7 +213,7 @@ run_one_gform_intervention <- function(intervention_number, shared_data) {
     boot_iter = boot_iter,
     boot_seed = boot_seed,
     target_week = population_week,
-    run_bootstrap = run_bootstrap,
+    run_bootstrap = if (use_heatmap_only) FALSE else run_bootstrap,
     run_singleweek_heatmap = run_singleweek_heatmap,
     parallel_singleweek_heatmap = run_parallel_singleweek_heatmap,
     parallel_bootstrap = run_parallel_bootstrap,
@@ -203,6 +221,10 @@ run_one_gform_intervention <- function(intervention_number, shared_data) {
     bootstrap_resume = TRUE,
     dir_heatmap = dir_heatmap,
     heatmap_resume = TRUE,
+    heatmap_only = use_heatmap_only,
+    dir_weekly = dir_weekly,
+    dir_population = dir_population,
+    dir_other = dir_other,
     sample_frac = sample_frac
   )
   if (!is.null(res$timing)) {
@@ -210,8 +232,6 @@ run_one_gform_intervention <- function(intervention_number, shared_data) {
   }
 
   output_paths <- gform_output_paths(spec$output_stub, dir_other)
-  weekly_path <- file.path(dir_weekly, paste0(spec$output_stub, "_weekly_effects.rds"))
-  population_path <- file.path(dir_population, paste0(spec$output_stub, "_population_effects.rds"))
   excel_path <- file.path(dir_summary, paste0(spec$output_stub, "_point_estimates.xlsx"))
   boot_paths <- gform_bootstrap_paths(spec$output_stub, dir_bootstrap)
 
@@ -333,7 +353,8 @@ message(
   paste(intervention_numbers, collapse = ", "),
   " | bootstrap: ",
   if (run_bootstrap) paste0(boot_iter, " iter (",
-    if (run_parallel_bootstrap) "paralelo" else "secuencial", ")") else "no"
+    if (run_parallel_bootstrap) "paralelo" else "secuencial", ")") else "no",
+  if (heatmap_only) " | heatmap_only: auto por intervención" else ""
 )
 message(
   "CPUs: ", parallel_config$n_cores,
@@ -459,10 +480,13 @@ for (int_num in intervention_numbers) {
     dir_population = dir_population,
     dir_summary = dir_summary,
     dir_bootstrap = dir_bootstrap,
-    boot_iter = if (run_bootstrap) boot_iter else 0L,
+    boot_iter = boot_iter,
     boot_seed = boot_seed,
     total_births = shared_data$total_births,
-    sample_frac = sample_frac
+    sample_frac = sample_frac,
+    run_heatmap = run_singleweek_heatmap,
+    dir_heatmap = dir_heatmap,
+    dir_other = dir_other
   )) {
     message("\nIntervención ", int_num, " (", spec$intervention_id, ") ya completa — omitida.")
     next

@@ -1413,6 +1413,47 @@ compute_population_effects <- function(
   )])
 }
 
+gform_intervention_fingerprint <- function(intervention) {
+  if (is.null(intervention) || identical(intervention$type, "none")) {
+    return(list(type = "none"))
+  }
+  if (identical(intervention$type, "cap")) {
+    return(list(type = "cap", cap = intervention$cap))
+  }
+  if (identical(intervention$type, "pct_reduce")) {
+    return(list(type = "pct_reduce", pct = intervention$pct))
+  }
+  list(type = intervention$type)
+}
+
+gform_singleweek_heatmap_description <- function(
+    intervention,
+    follow_up_weeks = GFORM_DEFAULTS$follow_up_weeks) {
+
+  fu_rng <- paste0(min(follow_up_weeks), "-", max(follow_up_weeks))
+  if (identical(intervention$type, "cap")) {
+    return(paste0(
+      "Mapa de calor RD acumulado de PTB: exposicion acotada a ",
+      intervention$cap, " µg/m³ en una sola semana gestacional (eje X) ",
+      "evaluado en semanas de seguimiento ", fu_rng,
+      " (eje Y), referencia curso natural comun."
+    ))
+  }
+  if (identical(intervention$type, "pct_reduce")) {
+    return(paste0(
+      "Mapa de calor RD acumulado de PTB: reduccion del ",
+      round(100 * intervention$pct), "% en una sola semana gestacional (eje X) ",
+      "evaluado en semanas de seguimiento ", fu_rng,
+      " (eje Y), referencia curso natural comun."
+    ))
+  }
+  paste0(
+    "Mapa de calor RD acumulado de PTB (intervencion ", intervention$type,
+    ") en una sola semana gestacional (eje X), semanas de seguimiento ",
+    fu_rng, " (eje Y), referencia curso natural comun."
+  )
+}
+
 compute_singleweek_intervention_heatmap <- function(
     model_store,
     person_weeks,
@@ -1423,9 +1464,9 @@ compute_singleweek_intervention_heatmap <- function(
     risk_weeks_vec,
     control_vars,
     nat_mean = NULL,
+    intervention = NULL,
     intervention_weeks = GFORM_DEFAULTS$weeks_exposure,
     follow_up_weeks = GFORM_DEFAULTS$follow_up_weeks,
-    pct = GFORM_DEFAULTS$figure4_pct,
     dependent_var = GFORM_DEFAULTS$dependent_var,
     risk_entry_week = GFORM_DEFAULTS$risk_entry_week,
     output_stub,
@@ -1436,7 +1477,10 @@ compute_singleweek_intervention_heatmap <- function(
     parallel = FALSE,
     heatmap_batch_size = NULL) {
 
-  single_intervention <- list(type = "pct_reduce", pct = pct)
+  if (is.null(intervention)) {
+    intervention <- list(type = "pct_reduce", pct = GFORM_DEFAULTS$figure4_pct)
+  }
+  single_intervention <- intervention
   n_cols <- length(intervention_weeks)
 
   if (is.null(nat_mean)) {
@@ -1450,7 +1494,7 @@ compute_singleweek_intervention_heatmap <- function(
   dir.create(paths$dir, recursive = TRUE, showWarnings = FALSE)
   fingerprint <- gform_heatmap_fingerprint(
     output_stub = output_stub,
-    pct = pct,
+    intervention = single_intervention,
     total_births = total_births,
     sample_frac = sample_frac,
     follow_up_weeks = follow_up_weeks
@@ -1500,11 +1544,8 @@ compute_singleweek_intervention_heatmap <- function(
       long = tibble::as_tibble(long_df),
       wide = tibble::as_tibble(wide_mat)
     )
-    attr(out, "description") <- paste0(
-      "Mapa de calor RD acumulado de PTB: reduccion del ",
-      round(100 * pct), "% en una sola semana gestacional (eje X) ",
-      "evaluado en semanas de seguimiento ", min(follow_up_weeks), "-", max(follow_up_weeks),
-      " (eje Y), referencia curso natural comun."
+    attr(out, "description") <- gform_singleweek_heatmap_description(
+      single_intervention, follow_up_weeks
     )
     out
   }
@@ -1707,24 +1748,26 @@ gform_heatmap_paths <- function(output_stub, dir_heatmap) {
 
 gform_heatmap_fingerprint <- function(
     output_stub,
-    pct,
+    intervention,
     total_births,
     sample_frac,
     follow_up_weeks) {
-  list(
-    output_stub = output_stub,
-    pct = pct,
-    n_births = as.integer(total_births),
-    sample_frac = sample_frac,
-    follow_up_min = min(follow_up_weeks),
-    follow_up_max = max(follow_up_weeks)
+  c(
+    list(
+      output_stub = output_stub,
+      n_births = as.integer(total_births),
+      sample_frac = sample_frac,
+      follow_up_min = min(follow_up_weeks),
+      follow_up_max = max(follow_up_weeks)
+    ),
+    gform_intervention_fingerprint(intervention)
   )
 }
 
 gform_heatmap_ck_matches <- function(ck, fingerprint) {
   if (is.null(ck) || is.null(fingerprint)) return(FALSE)
-  keys <- c("output_stub", "pct", "n_births", "sample_frac", "follow_up_min", "follow_up_max")
-  for (k in keys) {
+  for (k in names(fingerprint)) {
+    if (!k %in% names(ck)) return(FALSE)
     a <- ck[[k]]
     b <- fingerprint[[k]]
     if (identical(a, NULL) && identical(b, NULL)) next
@@ -1735,6 +1778,50 @@ gform_heatmap_ck_matches <- function(ck, fingerprint) {
     }
   }
   TRUE
+}
+
+gform_heatmap_is_complete <- function(output_stub, dir_heatmap, dir_other) {
+  paths <- gform_heatmap_paths(output_stub, dir_heatmap)
+  out_paths <- gform_output_paths(output_stub, dir_other)
+  if (!file.exists(paths$long)) return(FALSE)
+  if (is.na(file.info(paths$long)$size) || file.info(paths$long)$size <= 0L) {
+    return(FALSE)
+  }
+  file.exists(out_paths$singleweek_heatmap)
+}
+
+gform_load_saved_point_results <- function(
+    output_stub,
+    dir_weekly,
+    dir_population,
+    dir_other) {
+
+  weekly_path <- file.path(dir_weekly, paste0(output_stub, "_weekly_effects.rds"))
+  population_path <- file.path(
+    dir_population, paste0(output_stub, "_population_effects.rds")
+  )
+  curves_path <- gform_output_paths(output_stub, dir_other)$cumulative_risk_curves
+  missing <- c(weekly_path, population_path, curves_path)[
+    !file.exists(c(weekly_path, population_path, curves_path))
+  ]
+  if (length(missing)) {
+    stop(
+      "GFORM_HEATMAP_ONLY: faltan RDS previos para ", output_stub, ": ",
+      paste(basename(missing), collapse = ", ")
+    )
+  }
+  weekly_effects <- readRDS(weekly_path)$point
+  population_effects <- readRDS(population_path)$point
+  cumulative_risk_curves <- readRDS(curves_path)$point
+  nat_mean <- data.table::as.data.table(weekly_effects)[
+    , .(time = week, risk_natural)
+  ]
+  list(
+    weekly_effects = weekly_effects,
+    population_effects = population_effects,
+    cumulative_risk_curves = cumulative_risk_curves,
+    nat_mean = nat_mean
+  )
 }
 
 gform_save_heatmap_checkpoint <- function(path, fingerprint, completed_weeks) {
@@ -2041,9 +2128,21 @@ run_gform_intervention <- function(
     dir_bootstrap = NULL,
     bootstrap_resume = TRUE,
     dir_heatmap = NULL,
-    heatmap_resume = TRUE) {
+    heatmap_resume = TRUE,
+    heatmap_only = FALSE,
+    dir_weekly = NULL,
+    dir_population = NULL,
+    dir_other = NULL) {
 
   timing <- gform_timing_log_init()
+  heatmap_only <- isTRUE(heatmap_only)
+  if (heatmap_only && !run_singleweek_heatmap) {
+    stop("run_gform_intervention: heatmap_only requiere run_singleweek_heatmap = TRUE.")
+  }
+  if (heatmap_only && (is.null(dir_weekly) || is.null(dir_population) || is.null(dir_other))) {
+    stop("run_gform_intervention: heatmap_only requiere dir_weekly, dir_population y dir_other.")
+  }
+
   fingerprint <- gform_run_fingerprint(
     output_stub = intervention_spec$output_stub,
     boot_iter = boot_iter,
@@ -2051,7 +2150,20 @@ run_gform_intervention <- function(
     total_births = total_births,
     sample_frac = sample_frac
   )
-  if (run_bootstrap && boot_iter > 0L && !is.null(dir_bootstrap) &&
+  saved_point <- NULL
+  if (heatmap_only) {
+    saved_point <- gform_load_saved_point_results(
+      output_stub = intervention_spec$output_stub,
+      dir_weekly = dir_weekly,
+      dir_population = dir_population,
+      dir_other = dir_other
+    )
+    message(
+      "Modo heatmap_only: reutilizando efectos puntuales guardados para ",
+      intervention_spec$output_stub, "."
+    )
+  }
+  if (!heatmap_only && run_bootstrap && boot_iter > 0L && !is.null(dir_bootstrap) &&
       gform_bootstrap_is_complete(
         output_stub = intervention_spec$output_stub,
         dir_bootstrap = dir_bootstrap,
@@ -2067,8 +2179,8 @@ run_gform_intervention <- function(
   } else {
     NULL
   }
-  skip_point_estimate <- FALSE
-  if (isTRUE(bootstrap_resume) && !is.null(point_ck_path)) {
+  skip_point_estimate <- heatmap_only
+  if (!heatmap_only && isTRUE(bootstrap_resume) && !is.null(point_ck_path)) {
     pt_ck <- gform_read_point_checkpoint(point_ck_path, fingerprint)
     if (!is.null(pt_ck)) {
       skip_point_estimate <- TRUE
@@ -2079,6 +2191,27 @@ run_gform_intervention <- function(
     }
   }
 
+  if (heatmap_only) {
+    block <- gform_time_block("Preparar exposición cruda (solo heatmap)", {
+      pollutant <- intervention_spec$pollutant
+      if (is.null(raw_wide_pollutant)) {
+        if (is.null(data_long)) {
+          stop("Se requiere data_long o raw_wide_pollutant preconstruido.")
+        }
+        raw_wide_pollutant <- build_wide_raw_exposure(
+          data_long, pollutant, weeks_keep = GFORM_DEFAULTS$weeks_exposure
+        )
+      }
+      list(
+        pollutant = pollutant,
+        raw_wide_pollutant = raw_wide_pollutant
+      )
+    })
+    timing <- gform_timing_log_add(timing, block$timing)
+    pollutant <- block$result$pollutant
+    raw_wide_pollutant <- block$result$raw_wide_pollutant
+    cox_frame_intervention <- NULL
+  } else {
   block <- gform_time_block("Construir frame Cox intervención", {
     intervention_obj <- readRDS(intervention_path)
     pollutant <- intervention_spec$pollutant
@@ -2134,8 +2267,20 @@ run_gform_intervention <- function(
   raw_wide_pollutant <- block$result$raw_wide_pollutant
   cox_frame_natural <- block$result$cox_frame_natural
   cox_frame_intervention <- block$result$cox_frame_intervention
+  }
 
-  if (isTRUE(skip_point_estimate)) {
+  if (heatmap_only) {
+    nat_mean <- saved_point$nat_mean
+    weekly_effects <- saved_point$weekly_effects
+    cumulative_risk_curves <- saved_point$cumulative_risk_curves
+    population_effects <- saved_point$population_effects
+    timing <- gform_timing_log_add(timing, list(
+      label = "Efectos puntuales (RDS previos, heatmap_only)",
+      start = Sys.time(),
+      end = Sys.time(),
+      sec = 0
+    ))
+  } else if (isTRUE(skip_point_estimate)) {
     pt_ck <- gform_read_point_checkpoint(point_ck_path, fingerprint)
     nat_mean <- pt_ck$nat_mean
     weekly_effects <- pt_ck$weekly_effects
@@ -2216,7 +2361,32 @@ run_gform_intervention <- function(
   boot_out <- NULL
   weekly_ci <- weekly_effects
   population_ci <- population_effects
-  if (run_bootstrap && boot_iter > 0L) {
+  if (heatmap_only && boot_iter > 0L && !is.null(dir_bootstrap) &&
+      gform_bootstrap_is_complete(
+        output_stub = intervention_spec$output_stub,
+        dir_bootstrap = dir_bootstrap,
+        boot_iter = boot_iter,
+        boot_seed = boot_seed,
+        total_births = total_births,
+        sample_frac = sample_frac
+      )) {
+    paths <- gform_bootstrap_paths(intervention_spec$output_stub, dir_bootstrap)
+    ci <- compute_bootstrap_ci(
+      data.table::fread(paths$weekly),
+      data.table::fread(paths$population)
+    )
+    weekly_ci <- dplyr::left_join(weekly_effects, ci$weekly_ci, by = "week")
+    population_ci <- dplyr::left_join(
+      population_effects,
+      ci$population_ci |>
+        dplyr::select(
+          "scenario",
+          dplyr::ends_with("_lcl"),
+          dplyr::ends_with("_ucl")
+        ),
+      by = "scenario"
+    )
+  } else if (!heatmap_only && run_bootstrap && boot_iter > 0L) {
     if (is.null(dir_bootstrap)) {
       stop("run_gform_intervention: se requiere dir_bootstrap para bootstrap secuencial.")
     }
@@ -2286,6 +2456,7 @@ run_gform_intervention <- function(
           risk_weeks_vec = risk_weeks_vec,
           control_vars = control_vars,
           nat_mean = nat_mean,
+          intervention = intervention_spec$intervention,
           follow_up_weeks = follow_up_weeks,
           output_stub = intervention_spec$output_stub,
           dir_heatmap = dir_heatmap,
@@ -2322,7 +2493,10 @@ gform_intervention_is_complete <- function(
     boot_iter = GFORM_DEFAULTS$boot_iter,
     boot_seed = GFORM_DEFAULTS$boot_seed,
     total_births = NULL,
-    sample_frac = NULL) {
+    sample_frac = NULL,
+    run_heatmap = FALSE,
+    dir_heatmap = NULL,
+    dir_other = NULL) {
 
   weekly_path <- file.path(dir_weekly, paste0(output_stub, "_weekly_effects.rds"))
   population_path <- file.path(dir_population, paste0(output_stub, "_population_effects.rds"))
@@ -2331,6 +2505,12 @@ gform_intervention_is_complete <- function(
 
   if (!all(file.exists(c(weekly_path, population_path, excel_path)))) {
     return(FALSE)
+  }
+  if (isTRUE(run_heatmap)) {
+    if (is.null(dir_heatmap) || is.null(dir_other)) return(FALSE)
+    if (!gform_heatmap_is_complete(output_stub, dir_heatmap, dir_other)) {
+      return(FALSE)
+    }
   }
   if (boot_iter > 0L && file.exists(boot_ck)) {
     ck <- readRDS(boot_ck)

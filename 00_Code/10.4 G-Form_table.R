@@ -4,7 +4,8 @@
 #   Rscript "00_Code/10.4 G-Form_table.R"
 #
 # Entrada:
-#   02_Output/G-Form/Summary_results/{pm25,no2,o3}_pct{p}_point_estimates.xlsx
+#   02_Output/G-Form/Summary_results/{stub}_point_estimates.xlsx
+#     stubs: pm25/no2/o3 _pct20, _lt20, _lt15, _lt10, _lt5 (según disponibilidad)
 #   02_Output/G-Form/Bootstrap/{stub}/population_boot.csv  (IC de PAF si existe)
 # Salida:
 #   02_Output/G-Form/Summary_results/Table_population_effects_summary.xlsx
@@ -34,20 +35,35 @@ dir_summary <- file.path(data_out_g, "Summary_results")
 dir_bootstrap <- file.path(data_out_g, "Bootstrap")
 path_output <- file.path(dir_summary, "Table_population_effects_summary.xlsx")
 
-reduction_pcts <- c(5, 10, 15, 20)
-
 pollutant_specs <- list(
   pm25 = list(
     stub_prefix = "pm25",
-    section_label = "PM2.5 (\u00b5g/m\u00b3)"
+    section_label = "PM2.5 (\u00b5g/m\u00b3)",
+    scenarios = list(
+      list(stub = "pm25_lt20", label = "< 20 \u00b5g/m\u00b3"),
+      list(stub = "pm25_lt15", label = "< 15 \u00b5g/m\u00b3"),
+      list(stub = "pm25_lt10", label = "< 10 \u00b5g/m\u00b3"),
+      list(stub = "pm25_lt5", label = "< 5 \u00b5g/m\u00b3"),
+      list(stub = "pm25_pct20", label = "Reduced by 20%")
+    )
   ),
   no2 = list(
     stub_prefix = "no2",
-    section_label = "NO2 (ppbv)"
+    section_label = "NO2 (ppbv)",
+    scenarios = list(
+      list(stub = "no2_lt20", label = "< 20 ppbv"),
+      list(stub = "no2_lt15", label = "< 15 ppbv"),
+      list(stub = "no2_lt10", label = "< 10 ppbv"),
+      list(stub = "no2_lt5", label = "< 5 ppbv"),
+      list(stub = "no2_pct20", label = "Reduced by 20%")
+    )
   ),
   o3 = list(
     stub_prefix = "o3",
-    section_label = "O3 (ppbv)"
+    section_label = "O3 (ppbv)",
+    scenarios = list(
+      list(stub = "o3_pct20", label = "Reduced by 20%")
+    )
   )
 )
 
@@ -286,47 +302,44 @@ format_table_row <- function(scenario_label, pop_row) {
   )
 }
 
-build_pollutant_block <- function(spec, reduction_pcts) {
-  stub_prefix <- spec$stub_prefix
-  section_label <- spec$section_label
+scenario_excel_path <- function(stub) {
+  file.path(dir_summary, paste0(stub, "_point_estimates.xlsx"))
+}
 
-  available_stubs <- Filter(
-    function(pct) {
-      file.exists(file.path(dir_summary, paste0(stub_prefix, "_pct", pct, "_point_estimates.xlsx")))
-    },
-    reduction_pcts
+build_pollutant_block <- function(spec) {
+  section_label <- spec$section_label
+  scenarios <- spec$scenarios
+
+  available <- Filter(
+    function(sc) file.exists(scenario_excel_path(sc$stub)),
+    scenarios
   )
 
-  if (!length(available_stubs)) {
-    missing <- paste0(stub_prefix, "_pct", reduction_pcts)
-    for (stub in missing) {
-      message("  [omitido] ", stub, ": no se encontró ", stub, "_point_estimates.xlsx")
+  if (!length(available)) {
+    for (sc in scenarios) {
+      message("  [omitido] ", sc$stub, ": no se encontró ", sc$stub, "_point_estimates.xlsx")
     }
-    warning("Sin resultados para ", stub_prefix, "; se omite bloque.")
+    warning("Sin resultados para ", spec$stub_prefix, "; se omite bloque.")
     return(NULL)
   }
 
-  for (pct in setdiff(reduction_pcts, available_stubs)) {
-    stub <- paste0(stub_prefix, "_pct", pct)
-    message("  [omitido] ", stub, ": no se encontró ", stub, "_point_estimates.xlsx")
+  for (sc in scenarios) {
+    if (!file.exists(scenario_excel_path(sc$stub))) {
+      message("  [omitido] ", sc$stub, ": no se encontró ", sc$stub, "_point_estimates.xlsx")
+    }
   }
 
-  first_stub <- paste0(stub_prefix, "_pct", available_stubs[[1L]])
-  natural_row <- load_scenario_population(first_stub, "observed")
+  natural_row <- load_scenario_population(available[[1L]]$stub, "observed")
   if (is.null(natural_row)) {
-    warning("No se pudo leer curso natural para ", stub_prefix)
+    warning("No se pudo leer curso natural para ", spec$stub_prefix)
     return(NULL)
   }
 
   rows <- list(format_table_row("Natural Course", natural_row))
 
-  for (pct in available_stubs) {
-    stub <- paste0(stub_prefix, "_pct", pct)
-    intervention_row <- load_scenario_population(stub, "intervention")
-    rows[[length(rows) + 1L]] <- format_table_row(
-      paste0("Reduced by ", pct, "%"),
-      intervention_row
-    )
+  for (sc in available) {
+    intervention_row <- load_scenario_population(sc$stub, "intervention")
+    rows[[length(rows) + 1L]] <- format_table_row(sc$label, intervention_row)
   }
 
   c(
@@ -336,7 +349,7 @@ build_pollutant_block <- function(spec, reduction_pcts) {
 }
 
 build_summary_table <- function() {
-  blocks <- lapply(pollutant_specs, build_pollutant_block, reduction_pcts = reduction_pcts)
+  blocks <- lapply(pollutant_specs, build_pollutant_block)
   blocks <- Filter(Negate(is.null), blocks)
   if (!length(blocks)) {
     stop("No hay resultados disponibles para construir la tabla.")

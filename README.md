@@ -28,7 +28,7 @@ Additional support: **(CR)²**, Chile, FONDAP/ANID 1523A0002
 
 ## :pushpin: Publication
 
-Blanco, E., Conejeros, J.D., Bravo, I., Cornejo, F., Osses, A., & Benmarhnia, T. Estimating the perinatal health benefits of hypothetical pollution interventions in Santiago, Chile using parametric g-computation. *Under Review*. 2025.
+*Work in progess*. 
 
 ---
 

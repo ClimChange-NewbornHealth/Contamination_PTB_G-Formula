@@ -450,7 +450,11 @@ heatmap_fill_scale <- function(rd_lim) {
   )
 }
 
-heatmap_panel_theme <- function(show_legend, show_x_axis) {
+heatmap_panel_theme <- function(
+    show_legend,
+    show_x_title = TRUE,
+    show_x_text = FALSE,
+    show_y = TRUE) {
   gform_panel_theme() +
     ggplot2::theme(
       legend.position = if (show_legend) "top" else "none",
@@ -463,13 +467,33 @@ heatmap_panel_theme <- function(show_legend, show_x_axis) {
       legend.margin = ggplot2::margin(b = 2, t = 0),
       legend.title.align = 0,
       plot.margin = ggplot2::margin(4, 4, 4, 4),
-      axis.title.x = if (show_x_axis) {
+      axis.title.x = if (show_x_title) {
         ggplot2::element_text(size = axis_title_size)
       } else {
         ggplot2::element_blank()
       },
-      axis.text.x = if (show_x_axis) {
+      axis.text.x = if (show_x_text) {
         ggplot2::element_text()
+      } else {
+        ggplot2::element_blank()
+      },
+      axis.title.y = if (show_y) {
+        ggplot2::element_text(size = axis_title_size)
+      } else {
+        ggplot2::element_blank()
+      },
+      axis.text.y = if (show_y) {
+        ggplot2::element_text()
+      } else {
+        ggplot2::element_blank()
+      },
+      axis.ticks = if (show_y || show_x_text) {
+        ggplot2::element_line()
+      } else {
+        ggplot2::element_blank()
+      },
+      axis.line = if (show_y || show_x_text) {
+        ggplot2::element_line()
       } else {
         ggplot2::element_blank()
       }
@@ -488,7 +512,8 @@ plot_heatmap_rd_panel <- function(
     main_title,
     subtitle,
     rd_lim,
-    show_x_axis = TRUE) {
+    show_x_title = TRUE,
+    show_x_text = TRUE) {
 
   if (is.null(data) || !nrow(data)) {
     stop("plot_heatmap_rd_panel requiere datos con filas.")
@@ -510,16 +535,21 @@ plot_heatmap_rd_panel <- function(
     ggplot2::labs(
       title = main_title,
       subtitle = subtitle,
-      x = if (show_x_axis) "Gestational Week of Intervention" else NULL,
+      x = "Gestational Week of Intervention",
       y = "Follow-up Week"
     ) +
-    heatmap_panel_theme(show_legend = TRUE, show_x_axis = show_x_axis)
+    heatmap_panel_theme(
+      show_legend = TRUE,
+      show_x_title = show_x_title,
+      show_x_text = show_x_text
+    )
 }
 
 plot_heatmap_no_intervention_panel <- function(
     main_title,
     subtitle,
-    show_x_axis = TRUE) {
+    show_x_title = TRUE,
+    show_x_text = FALSE) {
 
   x_mid <- mean(intervention_week_range)
   y_mid <- mean(follow_up_weeks)
@@ -538,16 +568,52 @@ plot_heatmap_no_intervention_panel <- function(
     ggplot2::labs(
       title = main_title,
       subtitle = subtitle,
-      x = if (show_x_axis) "Gestational Week of Intervention" else NULL,
+      x = "Gestational Week of Intervention",
       y = "Follow-up Week"
     ) +
-    heatmap_panel_theme(show_legend = FALSE, show_x_axis = show_x_axis)
+    heatmap_panel_theme(
+      show_legend = FALSE,
+      show_x_title = show_x_title,
+      show_x_text = show_x_text
+    )
+}
+
+plot_heatmap_no_intervention_blank_panel <- function(main_title, subtitle) {
+  ggplot2::ggplot() +
+    ggplot2::annotate(
+      "text",
+      x = 0.5,
+      y = 0.5,
+      label = "No Intervention",
+      size = 4.2,
+      colour = "grey35",
+      fontface = "italic"
+    ) +
+    ggplot2::labs(
+      title = main_title,
+      subtitle = subtitle
+    ) +
+    ggplot2::coord_cartesian(xlim = c(0, 1), ylim = c(0, 1), expand = FALSE, clip = "off") +
+    gform_panel_theme() +
+    ggplot2::theme(
+      legend.position = "none",
+      axis.title = ggplot2::element_blank(),
+      axis.text = ggplot2::element_blank(),
+      axis.ticks = ggplot2::element_blank(),
+      axis.line = ggplot2::element_blank(),
+      panel.grid = ggplot2::element_blank(),
+      panel.border = ggplot2::element_blank(),
+      panel.background = ggplot2::element_rect(fill = "white", colour = NA),
+      plot.background = ggplot2::element_rect(fill = "white", colour = NA),
+      plot.margin = ggplot2::margin(4, 4, 4, 4)
+    )
 }
 
 plot_heatmap_missing_panel <- function(
     main_title,
     subtitle,
-    show_x_axis = TRUE) {
+    show_x_title = TRUE,
+    show_x_text = FALSE) {
 
   x_mid <- mean(intervention_week_range)
   y_mid <- mean(follow_up_weeks)
@@ -565,10 +631,14 @@ plot_heatmap_missing_panel <- function(
     ggplot2::labs(
       title = main_title,
       subtitle = subtitle,
-      x = if (show_x_axis) "Gestational Week of Intervention" else NULL,
+      x = "Gestational Week of Intervention",
       y = "Follow-up Week"
     ) +
-    heatmap_panel_theme(show_legend = FALSE, show_x_axis = show_x_axis)
+    heatmap_panel_theme(
+      show_legend = FALSE,
+      show_x_title = show_x_title,
+      show_x_text = show_x_text
+    )
 }
 
 build_heatmap_grid <- function() {
@@ -579,19 +649,27 @@ build_heatmap_grid <- function() {
   for (row_i in seq_along(row_ids)) {
     row_id <- row_ids[[row_i]]
     row_cfg <- heatmap_rows[[row_id]]
-    show_x <- row_i == length(row_ids)
+    show_x_text <- row_i == length(row_ids)
+    show_x_title <- TRUE
 
     for (col_i in seq_along(pollutants)) {
       pollutant <- pollutants[[col_i]]
       stub <- row_cfg[[pollutant]]
       main_title <- if (row_i == 1L) panel_titles[[pollutant]] else NULL
       subtitle <- heatmap_subtitle(pollutant, row_id)
+      is_o3_blank <- pollutant == "o3" && row_id %in% c("lt20", "lt5")
 
-      if (is.na(stub) || !nzchar(stub)) {
+      if (is_o3_blank) {
+        p <- plot_heatmap_no_intervention_blank_panel(
+          main_title = main_title,
+          subtitle = subtitle
+        )
+      } else if (is.na(stub) || !nzchar(stub)) {
         p <- plot_heatmap_no_intervention_panel(
           main_title = main_title,
           subtitle = subtitle,
-          show_x_axis = show_x
+          show_x_title = show_x_title,
+          show_x_text = show_x_text
         )
       } else {
         hm <- load_heatmap_stub(stub)
@@ -599,7 +677,8 @@ build_heatmap_grid <- function() {
           p <- plot_heatmap_missing_panel(
             main_title = main_title,
             subtitle = subtitle,
-            show_x_axis = show_x
+            show_x_title = show_x_title,
+            show_x_text = show_x_text
           )
         } else {
           rd_lim <- panel_rd_lim(hm, pollutant)
@@ -608,7 +687,8 @@ build_heatmap_grid <- function() {
             main_title = main_title,
             subtitle = subtitle,
             rd_lim = rd_lim,
-            show_x_axis = show_x
+            show_x_title = show_x_title,
+            show_x_text = TRUE
           )
         }
       }

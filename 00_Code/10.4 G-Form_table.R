@@ -11,6 +11,7 @@
 #   02_Output/G-Form/Summary_results/Table_population_effects_summary.xlsx
 #
 # Nota: augmenta métricas derivadas (PAF) en Excel existentes sin re-estimación.
+# Repara columnas .x/.y (join bootstrap duplicado tras GFORM_HEATMAP_ONLY) sin re-estimar.
 # La tabla resumen presenta prevalencia, RD, AR y PAF en escala % (×100);
 # Cases y Risk Ratio permanecen en unidades originales (conteo y ratio).
 
@@ -33,6 +34,8 @@ install_load(c("readxl", "dplyr", "openxlsx", "writexl"))
 data_out_g <- "02_Output/G-Form/"
 dir_summary <- file.path(data_out_g, "Summary_results")
 dir_bootstrap <- file.path(data_out_g, "Bootstrap")
+dir_weekly <- file.path(data_out_g, "WeeklyEffects")
+dir_population <- file.path(data_out_g, "PopulationEffects")
 path_output <- file.path(dir_summary, "Table_population_effects_summary.xlsx")
 
 pollutant_specs <- list(
@@ -129,6 +132,128 @@ format_metric_row <- function(row, metric_name, scale = 1) {
     row[[cols[[3]]]] * scale,
     percent_display = scale != 1
   )
+}
+
+## ===== Reparar columnas .x/.y (join bootstrap duplicado) =====
+has_dplyr_join_suffix <- function(df) {
+  any(grepl("\\.(x|y)$", names(df), perl = TRUE))
+}
+
+needs_effects_sheet_repair <- function(df) {
+  nms <- names(df)
+  has_dplyr_join_suffix(df) ||
+    any(grepl("\\.\\.\\.", nms)) ||
+    any(grepl("\\.x$|\\.y$", nms, perl = TRUE)) ||
+    (sum(nms == "attributable_fraction_lcl") > 1L) ||
+    (sum(nms == "attributable_fraction_ucl") > 1L)
+}
+
+repair_dplyr_join_suffix <- function(df) {
+  df <- as.data.frame(df)
+  nms <- names(df)
+  if (any(grepl("\\.\\.\\.", nms))) {
+    nms <- sub("\\.\\.\\.\\d+$", "", nms)
+    names(df) <- nms
+  }
+  if (any(grepl("\\.y$", nms, perl = TRUE))) {
+    df <- df[, !grepl("\\.y$", names(df), perl = TRUE), drop = FALSE]
+  }
+  if (any(grepl("\\.x$", names(df), perl = TRUE))) {
+    names(df) <- sub("\\.x$", "", names(df), perl = TRUE)
+  }
+  dedupe_df_columns(df)
+}
+
+dedupe_df_columns <- function(df) {
+  df <- as.data.frame(df)
+  if (!ncol(df)) {
+    return(df)
+  }
+  nms <- names(df)
+  keep <- !duplicated(nms)
+  df[, keep, drop = FALSE]
+}
+
+repair_point_estimates_stub <- function(output_stub) {
+  repaired <- FALSE
+  weekly_path <- file.path(dir_weekly, paste0(output_stub, "_weekly_effects.rds"))
+  population_path <- file.path(
+    dir_population, paste0(output_stub, "_population_effects.rds")
+  )
+  excel_path <- file.path(dir_summary, paste0(output_stub, "_point_estimates.xlsx"))
+
+  if (file.exists(weekly_path)) {
+    weekly_obj <- readRDS(weekly_path)
+    fixed <- repair_dplyr_join_suffix(weekly_obj$point)
+    if (!identical(names(fixed), names(weekly_obj$point))) {
+      weekly_obj$point <- fixed
+      saveRDS(weekly_obj, weekly_path)
+      repaired <- TRUE
+    }
+  }
+
+  if (file.exists(population_path)) {
+    population_obj <- readRDS(population_path)
+    fixed <- repair_dplyr_join_suffix(population_obj$point)
+    if (!identical(names(fixed), names(population_obj$point)) ||
+        ncol(fixed) != ncol(population_obj$point)) {
+      population_obj$point <- fixed
+      saveRDS(population_obj, population_path)
+      repaired <- TRUE
+    }
+  }
+
+  if (file.exists(excel_path)) {
+    sheets <- readxl::excel_sheets(excel_path)
+    repair_sheets <- c("weekly_effects", "population_effects")
+    excel_needs_repair <- any(vapply(
+      intersect(sheets, repair_sheets),
+      function(sheet_name) {
+        df <- as.data.frame(readxl::read_excel(excel_path, sheet = sheet_name))
+        needs_effects_sheet_repair(df)
+      },
+      logical(1L)
+    ))
+    if (excel_needs_repair) {
+      sheets_data <- stats::setNames(
+        lapply(sheets, function(sheet_name) {
+          df <- as.data.frame(readxl::read_excel(excel_path, sheet = sheet_name))
+          if (sheet_name %in% repair_sheets) {
+            df <- repair_dplyr_join_suffix(df)
+          }
+          df
+        }),
+        sheets
+      )
+      writexl::write_xlsx(sheets_data, path = excel_path)
+      repaired <- TRUE
+    }
+  }
+
+  if (repaired) {
+    message("Columnas .x/.y reparadas: ", output_stub)
+  }
+  invisible(repaired)
+}
+
+repair_all_point_estimates <- function(stubs = NULL) {
+  if (is.null(stubs)) {
+    excel_files <- list.files(
+      dir_summary,
+      pattern = "_point_estimates\\.xlsx$",
+      full.names = FALSE
+    )
+    stubs <- sub("_point_estimates\\.xlsx$", "", excel_files)
+  }
+  if (!length(stubs)) {
+    message("No hay stubs para reparar columnas .x/.y.")
+    return(invisible(NULL))
+  }
+  repaired_any <- vapply(stubs, repair_point_estimates_stub, logical(1L))
+  if (!any(repaired_any)) {
+    message("No se encontraron columnas .x/.y ni duplicados en RDS/Excel.")
+  }
+  invisible(stubs[repaired_any])
 }
 
 ## ===== Augmentar métricas derivadas sin re-estimación =====
@@ -438,6 +563,9 @@ write_summary_workbook <- function(table_df, path_output) {
 }
 
 ## ===== Ejecución =====
+message("Reparando columnas .x/.y en RDS/Excel (sin re-estimación)...")
+repair_all_point_estimates()
+
 message("Augmentando métricas derivadas en Summary_results (sin re-estimación)...")
 augment_all_summary_excels()
 

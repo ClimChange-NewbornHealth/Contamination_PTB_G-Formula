@@ -1790,6 +1790,20 @@ gform_heatmap_is_complete <- function(output_stub, dir_heatmap, dir_other) {
   file.exists(out_paths$singleweek_heatmap)
 }
 
+gform_effects_point_only <- function(df, kind = c("weekly", "population")) {
+  kind <- match.arg(kind)
+  keep <- if (kind == "weekly") {
+    c("week", "risk_natural", "risk_intervention", "risk_ratio", "risk_difference")
+  } else {
+    c(
+      "scenario", "prevalence", "cases", "risk_ratio",
+      "risk_difference", "attributable_risk"
+    )
+  }
+  df <- as.data.frame(df)
+  df[, intersect(keep, names(df)), drop = FALSE]
+}
+
 gform_load_saved_point_results <- function(
     output_stub,
     dir_weekly,
@@ -2375,9 +2389,11 @@ run_gform_intervention <- function(
       data.table::fread(paths$weekly),
       data.table::fread(paths$population)
     )
-    weekly_ci <- dplyr::left_join(weekly_effects, ci$weekly_ci, by = "week")
+    weekly_point <- gform_effects_point_only(weekly_effects, "weekly")
+    population_point <- gform_effects_point_only(population_effects, "population")
+    weekly_ci <- dplyr::left_join(weekly_point, ci$weekly_ci, by = "week")
     population_ci <- dplyr::left_join(
-      population_effects,
+      population_point,
       ci$population_ci |>
         dplyr::select(
           "scenario",

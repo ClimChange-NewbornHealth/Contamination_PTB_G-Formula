@@ -1,277 +1,435 @@
-# Contamination and Preterm Birth: G-Computation Analysis with Distributed Lag Models
+# Estimating the Perinatal Health Benefits of Hypothetical Pollution Interventions in Santiago, Chile Using Parametric G-Computation :factory: :baby:
 
-## Descripción del Proyecto
+![GitHub Repo stars](https://img.shields.io/github/stars/ClimChange-NewbornHealth/Contamination_PTB_G-Formula)
+![GitHub watchers](https://img.shields.io/github/watchers/ClimChange-NewbornHealth/Contamination_PTB_G-Formula)
+![GitHub forks](https://img.shields.io/github/forks/ClimChange-NewbornHealth/Contamination_PTB_G-Formula)
+![GitHub commit activity](https://img.shields.io/github/commit-activity/t/ClimChange-NewbornHealth/Contamination_PTB_G-Formula)
+![GitHub contributors](https://img.shields.io/github/contributors/ClimChange-NewbornHealth/Contamination_PTB_G-Formula)
+![GitHub last commit](https://img.shields.io/github/last-commit/ClimChange-NewbornHealth/Contamination_PTB_G-Formula)
+![GitHub language count](https://img.shields.io/github/languages/count/ClimChange-NewbornHealth/Contamination_PTB_G-Formula)
+![GitHub top language](https://img.shields.io/github/languages/top/ClimChange-NewbornHealth/Contamination_PTB_G-Formula)
+![GitHub License](https://img.shields.io/github/license/ClimChange-NewbornHealth/Contamination_PTB_G-Formula)
+![GitHub repo file or directory count](https://img.shields.io/github/directory-file-count/ClimChange-NewbornHealth/Contamination_PTB_G-Formula)
+![GitHub code size in bytes](https://img.shields.io/github/languages/code-size/ClimChange-NewbornHealth/Contamination_PTB_G-Formula)
 
-Este proyecto evalúa el efecto de la contaminación atmosférica (PM2.5 y O3) sobre el parto pretérmino en Chile mediante métodos de g-computation (g-formula) con modelos de rezago distribuido (Distributed Lag Models, DLNM). El análisis utiliza datos de nacimientos y exposición a contaminantes atmosféricos para estimar escenarios contrafactuales de reducción de contaminación y su impacto potencial en la prevalencia de partos pretérminos.
+## :moneybag: Funding
 
-## Objetivos
+**FONDECYT Nº 11240322**: Climate change and urban health: how air pollution, temperature, and city structure relate to preterm birth
 
-### Objetivo Principal
-Evaluar escenarios contrafactuales de reducción de PM2.5 y O3 sobre el parto pretérmino mediante g-computation con modelos de rezago distribuido.
+Additional support: **(CR)²**, Chile, FONDAP/ANID 1523A0002
 
-### Objetivos Específicos
-1. Procesar y preparar datos de contaminación atmosférica (PM2.5 y O3) utilizando métodos de interpolación espacial (kriging e IDW)
-2. Procesar datos de nacimientos y construir historiales de exposición semanal durante el embarazo
-3. Estimar modelos de supervivencia (Cox) y modelos de rezago distribuido (DLNM) para evaluar asociaciones entre exposición y parto pretérmino
-4. Implementar g-computation para estimar efectos contrafactuales de intervenciones de reducción de contaminación
-5. Calcular métricas de impacto poblacional: prevalencia, razón de riesgos, diferencia de riesgos, casos atribuibles y riesgo atribuible
+## :busts_in_silhouette: Research Team
 
-## Datos
+:mailbox_with_mail: **Estela Blanco** (<estela.blanco@uc.cl>) — **Principal Investigator / Corresponding Author**
 
-### Fuentes de Datos
+:mailbox_with_mail: **José Daniel Conejeros** (<jdconejeros@uc.cl>) — **Research Assistant / Repository Manager**
 
-#### Datos de Contaminación Atmosférica
-- **PM2.5 y O3**: Series temporales diarias de concentraciones de material particulado fino (PM2.5) y ozono (O3)
-- **Métodos de interpolación espacial**:
-  - Kriging (`pm25_krg`, `o3_krg`)
-  - Inverse Distance Weighting - IDW (`pm25_idw`, `o3_idw`)
-- **Período**: 2010-2020
-- **Ubicación**: `Data/Input/Contant_series/`
+**Research Collaborators**: Ismael Bravo, Felipe Cornejo, Axel Osses, & Tarik Benmarhnia
 
-#### Datos de Nacimientos
-- **Fuente**: Registros de nacimientos en Chile
-- **Período**: 2010-2020
-- **Variables principales**:
-  - Edad gestacional (semanas)
-  - Parto pretérmino (definido como <37 semanas)
-  - Variables sociodemográficas (sexo, edad y educación de padres, etc.)
-  - Variables temporales (año, mes, COVID-19)
-- **Ubicación**: `Data/Input/Nacimientos/`
+## :pushpin: Publication
 
-#### Datos de Vulnerabilidad Social
-- **Índice de Vulnerabilidad Social (SOVI)**: Clasificación de vulnerabilidad por comuna
-- **Ubicación**: `Data/Input/SOVI/`
-
-### Datos Procesados
-
-Los datos procesados se almacenan en `Data/Output/`:
-- `series_births_exposition_pm25_o3_kriging_idw_long.RData`: Base de datos principal con historiales de exposición semanal
-- `series_contamination_pm25_o3_kriging_idw.RData`: Series temporales de contaminación
-- `births_2010_2020.RData`: Base de datos de nacimientos procesada
-
-## Métodos
-
-### 1. Procesamiento de Datos
-
-#### 1.1 Procesamiento de Datos de Contaminación (`Code/1.0 Process_data_contam.R`)
-- Carga y procesamiento de datos de PM2.5 y O3
-- Interpolación espacial mediante kriging e IDW
-- Generación de series temporales diarias por comuna
-
-#### 1.2 Procesamiento de Datos de Nacimientos (`Code/2.0 Births_process_data.R`, `Code/2.1 Births_process_data_long_weeksg.R`)
-- Limpieza y preparación de datos de nacimientos
-- Definición de variables de resultado (parto pretérmino, bajo peso al nacer, etc.)
-- Construcción de variables temporales y sociodemográficas
-- Creación de estructura de datos longitudinal por semana gestacional
-
-#### 1.3 Construcción de Historiales de Exposición (`Code/3.0 Exposure_data.R`, `Code/4.0 Join_CONT_BW.R`, `Code/4.1 Join_CONT_BW_weeks.R`)
-- Asignación de exposición semanal durante el embarazo
-- Cálculo de métricas de exposición agregadas (promedios por trimestre, exposición acumulada)
-- Normalización por IQR (Interquartile Range) para análisis
-
-### 2. Análisis Descriptivos (`Code/5.0 Descriptives.R` y subsecuentes)
-- Estadísticas descriptivas de variables de resultado y exposición
-- Análisis de tendencias temporales
-- Caracterización de asociaciones preliminares
-
-### 3. Modelos de Supervivencia (`Code/6.0 Cox_models_full_sample.R` y subsecuentes)
-- Modelos de regresión de Cox para evaluar asociaciones entre exposición y parto pretérmino
-- Análisis por subgrupos (verano para O3, invierno para PM2.5)
-- Cálculo de fracciones atribuibles poblacionales (PAF)
-
-### 4. Modelos de Rezago Distribuido (DLNM) (`Code/7.0 DLM_Preterm_Full_Period.R`, `Code/8.0 DLNM_Preterm_Full_Period.R`)
-- Modelos de rezago distribuido para capturar efectos de exposición a lo largo del tiempo
-- Especificación de funciones base para exposición y rezago
-- Estimación de efectos acumulados y por ventanas de tiempo específicas
-
-### 5. G-Computation con DLNM (`Code/9.0 G-Form_DLNM_Preterm_Full_Period.R`)
-
-#### 5.1 Especificación del Modelo
-- Modelos logísticos para probabilidad de evento por semana gestacional (semanas 28-36)
-- Incorporación de crossbasis de exposición mediante DLNM
-- Ajuste por confusores: sexo, edad y educación de padres, variables temporales, vulnerabilidad social, temperatura
-
-#### 5.2 Escenarios de Intervención
-- **Escenario observado**: Curso natural sin intervención
-- **Intervención 1**: PM2.5 < 20 µg/m³
-- **Intervención 2**: PM2.5 < 15 µg/m³
-- **Intervención 3**: PM2.5 < 10 µg/m³
-- **Intervención 4**: PM2.5 < 5 µg/m³
-- **Intervención 5**: Reducción del 20% en PM2.5 y O3 cada semana
-
-#### 5.3 Implementación de G-Computation
-1. **Ajuste del modelo**: Estimación de modelos logísticos por semana de riesgo
-2. **Predicción contrafactual**: Aplicación de escenarios de intervención a historiales de exposición
-3. **Cálculo de probabilidades**: Estimación de probabilidades de supervivencia bajo cada escenario
-4. **Agregación**: Cálculo de métricas poblacionales (prevalencia, casos, razón de riesgos, diferencia de riesgos)
-
-#### 5.4 Inferencia Estadística
-- Intervalos de confianza del 95% mediante simulación paramétrica (bootstrap paramétrico)
-- 200 iteraciones de bootstrap para estimación de incertidumbre
-
-### 6. Visualización (`Code/9.1 G-Form_Heatmaps_20pct.R`)
-- Heatmaps de diferencias de riesgo por escenario de intervención
-- Visualización de efectos por contaminante y tipo de intervención
-
-## Estructura del Código
-
-```
-Code/
-├── 0.1 Settings.R              # Configuración general (locale, opciones)
-├── 0.2 Packages.R              # Carga e instalación de paquetes
-├── 0.3 Functions.R              # Funciones auxiliares personalizadas
-│
-├── 1.0 Process_data_contam.R   # Procesamiento datos contaminación
-├── 2.0 Births_process_data.R   # Procesamiento datos nacimientos
-├── 2.1 Births_process_data_long_weeksg.R  # Estructura longitudinal por semana gestacional
-├── 3.0 Exposure_data.R         # Construcción historiales de exposición
-├── 4.0 Join_CONT_BW.R          # Unión datos contaminación y nacimientos
-├── 4.1 Join_CONT_BW_weeks.R   # Unión con estructura semanal
-│
-├── 5.0 Descriptives.R          # Análisis descriptivos principales
-├── 5.1 Descritive_Births_trends_preterm.R
-├── 5.2 Descriptives_exposition.R
-├── 5.3 Descriptives_asociation_contaminant_data.R
-├── 5.4 Descriptives_exposition_test.R
-│
-├── 6.0 Cox_models_full_sample.R      # Modelos Cox muestra completa
-├── 6.1 Cox_models_ozone_summer.R     # Modelos Cox O3 verano
-├── 6.2 Cox_models_pm_winter.R        # Modelos Cox PM2.5 invierno
-├── 6.3 Cox_models_plots_kriging.R    # Visualización modelos kriging
-├── 6.4 Cox_models_plots_idw.R        # Visualización modelos IDW
-├── 6.5 IQR_cox_models.R              # Modelos normalizados por IQR
-├── 6.6 PAF_cox_models.R              # Fracciones atribuibles poblacionales
-│
-├── 7.0 DLM_Preterm_Full_Period.R     # Modelos de rezago distribuido (DLM)
-├── 8.0 DLNM_Preterm_Full_Period.R    # Modelos de rezago distribuido no lineal (DLNM)
-│
-├── 9.0 G-Form_DLNM_Preterm_Full_Period.R  # G-computation con DLNM
-└── 9.1 G-Form_Heatmaps_20pct.R            # Visualización resultados g-computation
-```
-
-### Código Adicional
-- `Code/OBS/`: Análisis con datos observados (no interpolados)
-- `Code/paf_cox_manual.R`: Cálculo manual de fracciones atribuibles
-- `Code/test.R`: Scripts de prueba
-
-## Parámetros Principales
-
-### Parámetros de G-Computation (`Code/9.0 G-Form_DLNM_Preterm_Full_Period.R`)
-- `max_follow_up`: 37 semanas (semanas 0-36)
-- `risk_weeks`: 28:36 (semanas de riesgo analizadas)
-- `lag_df`: 4 grados de libertad para el rezago en DLNM
-- `boot_iter`: 200 iteraciones para intervalos de confianza
-- `baseline_scenario`: "observed" (escenario de referencia)
-
-### Variables de Exposición
-- `pm25_krg_week_iqr`: PM2.5 kriging normalizado por IQR
-- `pm25_idw_week_iqr`: PM2.5 IDW normalizado por IQR
-- `o3_krg_week_iqr`: O3 kriging normalizado por IQR
-- `o3_idw_week_iqr`: O3 IDW normalizado por IQR
-
-### Confusores Incluidos
-- Variables sociodemográficas: sexo, edad y educación de padres, ocupación
-- Variables temporales: mes y año de inicio de embarazo, período COVID-19
-- Vulnerabilidad social: índice SOVI
-- Variables ambientales: temperatura
-
-## Resultados
-
-*[Sección pendiente - resultados preliminares]*
-
-Los resultados del análisis de g-computation se almacenan en:
-- `Output/G-Form/Gform_DLNM_results.xlsx`: Métricas principales por escenario
-- `Output/G-Form/Gform_DLNM_results.rds`: Objetos R completos con resultados
-- `Output/G-Form/Intervention_pm25_o3.xlsx`: Definición de escenarios de intervención
-- `Output/G-Form/Heatmap_*.png`: Visualizaciones de diferencias de riesgo
-
-## Requisitos del Sistema
-
-### Software
-- R (versión 4.0 o superior)
-- RStudio (recomendado)
-
-### Paquetes R Principales
-- `dplyr`, `tidyr`, `purrr`: Manipulación de datos
-- `survival`, `flexsurv`: Modelos de supervivencia
-- `dlnm`: Modelos de rezago distribuido
-- `furrr`, `future`: Procesamiento paralelo
-- `rio`, `writexl`: Importación/exportación de datos
-- `ggplot2`, `patchwork`: Visualización
-
-Ver `Code/0.2 Packages.R` para la lista completa de paquetes.
-
-### Recursos Computacionales
-- Procesamiento paralelo configurado para utilizar `detectCores() - 4` workers
-- Memoria: Se recomienda al menos 16 GB RAM para análisis completos
-- Tiempo estimado: El análisis completo de g-computation puede tomar varias horas dependiendo del tamaño de muestra
-
-## Uso
-
-### Ejecución del Análisis Completo
-
-1. **Configuración inicial**:
-   ```r
-   source("Code/0.1 Settings.R")
-   source("Code/0.2 Packages.R")
-   source("Code/0.3 Functions.R")
-   ```
-
-2. **Procesamiento de datos** (ejecutar en orden):
-   ```r
-   # 1. Procesar datos de contaminación
-   source("Code/1.0 Process_data_contam.R")
-   
-   # 2. Procesar datos de nacimientos
-   source("Code/2.0 Births_process_data.R")
-   source("Code/2.1 Births_process_data_long_weeksg.R")
-   
-   # 3. Construir historiales de exposición
-   source("Code/3.0 Exposure_data.R")
-   source("Code/4.0 Join_CONT_BW.R")
-   source("Code/4.1 Join_CONT_BW_weeks.R")
-   ```
-
-3. **Análisis descriptivos**:
-   ```r
-   source("Code/5.0 Descriptives.R")
-   ```
-
-4. **Modelos de asociación**:
-   ```r
-   source("Code/6.0 Cox_models_full_sample.R")
-   source("Code/8.0 DLNM_Preterm_Full_Period.R")
-   ```
-
-5. **G-computation**:
-   ```r
-   source("Code/9.0 G-Form_DLNM_Preterm_Full_Period.R")
-   ```
-
-### Análisis con Submuestras
-
-Para pruebas rápidas, se puede modificar el parámetro `sample_n_ids` en `Code/9.0 G-Form_DLNM_Preterm_Full_Period.R`:
-```r
-sample_n_ids <- 2000  # Probar con 2000 individuos
-```
-
-## Referencias
-
-*[Sección pendiente - referencias bibliográficas]*
-
-### Métodos Clave
-- **G-computation/G-formula**: Robins (1986), Hernán & Robins (2020)
-- **Distributed Lag Models**: Gasparrini (2011), Gasparrini et al. (2017)
-- **Causal Inference**: Hernán & Robins (2020)
-
-## Contacto
-
-*[Información de contacto pendiente]*
-
-## Licencia
-
-Ver archivo `LICENSE` para más detalles.
+Blanco, E., Conejeros, J.D., Bravo, I., Cornejo, F., Osses, A., & Benmarhnia, T. Estimating the perinatal health benefits of hypothetical pollution interventions in Santiago, Chile using parametric g-computation. *Under Review*. 2025.
 
 ---
 
-**Nota**: Este proyecto forma parte del proyecto ANID Iniciación 2024-2027 sobre Contaminación y Parto Pretérmino en Chile.
+## :dart: Project Overview
+
+### Background
+
+Ambient air pollution is a major environmental risk factor for adverse perinatal outcomes. Preterm birth (delivery before 37 completed weeks of gestation) remains a leading cause of neonatal mortality and long-term morbidity. While epidemiological evidence links PM₂.₅, NO₂, and O₃ to preterm birth, fewer studies have translated observed exposure–response associations into population-level estimates of the health benefits of realistic pollution-reduction scenarios, particularly in Latin American urban settings with heterogeneous exposure patterns.
+
+### Objective
+
+To estimate the population-level impact of hypothetical reductions in PM₂.₅, NO₂, and O₃ on the cumulative risk of preterm birth among singleton births in urban Santiago, Chile (2010–2020), using distributed-lag Cox models combined with parametric g-computation.
+
+### Methods
+
+We conducted a population-based retrospective cohort study using:
+
+- **Study population**: Singleton live births to women residing in the urban conurbation of Santiago (33 municipalities of the Province of Santiago plus Puente Alto), 2010–2020
+- **Sample size**: 713,918 births after exclusion criteria (51,081 preterm; 7.2%)
+- **Exposure**: Weekly municipality-level PM₂.₅, NO₂, and O₃ from the national air-quality monitoring network, spatially interpolated to municipal centroids using **ordinary kriging** (primary) and **inverse distance weighting (IDW)** (sensitivity)
+- **Additional exposures**: Daily mean temperature (CR2MET), NDVI (MODIS MOD13Q1 via Google Earth Engine), and municipal social vulnerability index (SOVI)
+- **Exposure windows**: Weekly gestational exposure series (weeks 1–44); period-specific averages for descriptives (full pregnancy, trimesters, last 30 and last 4 days)
+- **Outcome**: Preterm birth (<37 weeks), with subcategories:
+  - Very preterm (28–31 weeks)
+  - Moderate preterm (32–33 weeks)
+  - Late preterm (34–36 weeks)
+- **Distributed-lag models (DLM)**: Week-specific Cox proportional hazards models with time-weighted lagged exposure and delayed entry at week 28
+- **G-computation**: Parametric g-formula applied to natural-course Cox models (weeks 28–36) under counterfactual exposure histories
+- **Intervention scenarios**:
+  - **Threshold (cap)**: PM₂.₅ capped at 5, 10, 15, 20 µg/m³; NO₂ capped at 5, 10, 15, 20 ppbv
+  - **Proportional reduction**: 20% reduction applied to PM₂.₅, NO₂, or O₃ across all gestational weeks
+  - **Single-week interventions**: 20% reduction in one gestational week at a time (critical-window map)
+- **Covariates**: Newborn sex; maternal and paternal age, education, and occupation; month and year of last menstrual period; COVID-19 period; SOVI; weekly temperature; NDVI
+- **Inference**: Parametric bootstrap (250 replicates in manuscript; configurable in code via `GFORM_BOOT_ITER`)
+
+### Key Findings
+
+- **NO₂ interventions** showed the most consistent protective effects on cumulative preterm birth risk. A 20% reduction across gestation was associated with a risk difference of −0.12 percentage points (PAF −1.77%). Stronger benefits were observed under lower caps (e.g., NO₂ < 5 ppbv: RD −0.48 pp; PAF −6.98%).
+- **O₃**: A uniform 20% reduction was associated with a risk difference of −0.26 percentage points (PAF 3.80%), suggesting a meaningful share of observed preterm risk may be attributable to ozone exposure under the natural course.
+- **PM₂.₅**: Threshold and proportional-reduction scenarios showed small and statistically uncertain effects, with confidence intervals spanning both protective and adverse directions.
+- **Timing matters**: Single-week intervention heatmaps (Figure 5) identified gestational windows in which exposure reductions would yield the largest expected impact on cumulative preterm risk.
+
+---
+
+## ![R](https://skillicons.dev/icons?i=r) Code Structure
+
+### Setup Scripts
+
+- `00_Code/0.1 Settings.R` — Global settings and locale
+- `00_Code/0.2 Packages.R` — Package installation and loading (main pipeline)
+- `00_Code/0.2 Packages_gform.R` — Packages for g-computation pipeline
+- `00_Code/0.3 Functions.R` — Custom helper functions
+
+### Data Processing Scripts
+
+- `00_Code/1.0 Pollution_process_data.R` — Load and clean interpolated PM₂.₅, NO₂, O₃ series
+- `00_Code/2.0 Births_process_data.R` — Birth data cleaning, cohort definition, exclusions
+- `00_Code/3.0 NDVI_EarthEngine_commune_extraction.py` — NDVI extraction (Google Earth Engine)
+- `00_Code/3.1 Temp_NDVI_data.R` — Temperature and NDVI processing
+- `00_Code/4.0 Climate_data_generate.R` — Climate data generation
+- `00_Code/5.0 Exposure_data_births.R` — Weekly gestational exposure histories
+- `00_Code/6.0 Join_full_data.R` — Merge pollution, climate, and birth data
+- `00_Code/8.0 Correlation_pollulants.R` — Pollutant correlation analysis
+
+### Descriptive Analysis
+
+- `00_Code/7.0 Descriptive_births.R` — Birth and preterm trends
+- `00_Code/7.1 Descriptive_exposition.R` — Exposure descriptives
+
+### Statistical Models
+
+- `00_Code/9.0 DLM_pollution.R` — Distributed-lag Cox models (PM₂.₅, NO₂, O₃)
+- `00_Code/9.1 DLM_plots.R` — DLM visualization
+
+### G-Computation Pipeline
+
+- `00_Code/10.0 G-Form_build_interventions.R` — Build counterfactual exposure histories (Stage 1)
+- `00_Code/10.1 G-Form_functions.R` — Core g-formula functions
+- `00_Code/10.2 G-Form_models.R` — Run interventions, bootstrap, and heatmaps (Stage 2)
+- `00_Code/10.3 G-Form_plots.R` — Publication figures (cumulative risk, heatmaps)
+- `00_Code/10.4 G-Form_table.R` — Summary tables (Table 3)
+
+---
+
+## :chart_with_upwards_trend: Principal Findings
+
+### Figure 1. Flowchart of Analytical Sample Construction (2010–2020)
+
+Starting from 2,557,140 singleton births in Chile (2010–2020), sequential exclusions yielded a final analytic sample of **713,918 births** in urban Metropolitan Santiago.
+
+*Note*: Flowchart included in manuscript (`03_Paper/CTA_PTB_Gf_Manuscript.docx`).
+
+### Figure 2. Distribution of Daily PM₂.₅, NO₂, and O₃ (Kriging)
+
+![](/02_Output/Descriptives/Histogram_KRG_panel_compiled.png)
+
+*Note*: Municipality-day pollutant concentrations interpolated by ordinary kriging. Histograms summarize overall, seasonal, and pollutant-specific distributions across the study period.
+
+### Preterm Birth Trends in Santiago (2010–2020)
+
+![](/02_Output/Descriptives/Preterm_trends_2010_2020.png)
+
+*Note*: Annual prevalence of preterm birth and subcategories per 1,000 births. Analytic cohort N = 713,918.
+
+### Figure 3. Hazard Ratios for Preterm Birth by Gestational Week (DLM)
+
+![](/02_Output/Models/DLM_models_krg.png)
+
+*Note*: Week-specific hazard ratios (HR) and 95% CIs from distributed-lag Cox models. Each point represents the acute effect of weekly exposure at gestational week *t*, conditional on time-weighted lagged exposure through week *t*−1. Models adjusted for sex, parental characteristics, calendar time, SOVI, temperature, and NDVI. Kriging-based exposures; N = 713,918.
+
+### Figure 4. Cumulative Preterm Birth Risk Under 20% Pollution Reduction Scenarios
+
+![](/02_Output/G-Form/Figures/Figure_cumulative_risk_interventions.png)
+
+*Note*: Cumulative risk of preterm birth (weeks 28–36) under the natural course (observed exposure) vs. a uniform 20% reduction in weekly PM₂.₅, NO₂, or O₃. Estimates from parametric g-computation with distributed-lag Cox models.
+
+### Figure 5. Critical-Window Heatmap of Risk Differences (Single-Week 20% Reduction)
+
+![](/02_Output/G-Form/Figures/Figure_heatmap_rd_interventions.png)
+
+*Note*: Risk difference (RD) in cumulative preterm birth risk for a 20% reduction applied in a single gestational week (columns) and evaluated through follow-up weeks 28–36 (rows). Marginal single-week interventions; not directly comparable to simultaneous full-history interventions.
+
+---
+
+## :file_folder: Data Availability
+
+### Input Data Sources
+
+1. **Birth Records**: Chilean Ministry of Health (DEIS) vital statistics (2010–2020)
+   - Location: `01_Data/Input/Nacimientos/`
+   - Variables: Gestational age, birth weight, parental characteristics, municipality of residence
+
+2. **Air Pollution Data**: National air-quality monitoring network
+   - Location: `01_Data/Input/Clime_series/`
+   - Pollutants: PM₂.₅ (beta-attenuation), NO₂ (chemiluminescence), O₃ (UV photometry)
+   - Interpolation: Ordinary kriging (primary) and IDW (sensitivity)
+   - Spatial unit: Municipality centroids (34 comunas)
+
+3. **Temperature Data**: CR2MET gridded climate product
+   - Processed in: `00_Code/4.0 Climate_data_generate.R`
+   - Variable: Daily mean ambient temperature (TAD)
+
+4. **NDVI**: MODIS MOD13Q1 (250 m, 16-day composite)
+   - Extraction: `00_Code/3.0 NDVI_EarthEngine_commune_extraction.py`
+   - Gaps imputed with Kalman smoother
+
+5. **Socioeconomic Vulnerability Index (SOVI)**
+   - Location: `01_Data/Input/SOVI/`
+   - Categories: Low, medium-low, medium-high
+
+6. **Municipal Boundaries**
+   - Location: `01_Data/Input/district_geo/`
+
+### Processed Datasets
+
+Main analytical datasets are stored in `01_Data/Output/`:
+
+- `births_2010_2020.RData` — Cleaned birth records
+- `Contamination_Climate_Data_2010_2020.RData` — Merged pollution and climate series
+- `births_2010_2020_exposure_weeks.RData` — Weekly gestational exposure histories
+- `births_2010_2020_exposure_weeks_lagged.RData` — Weekly data with DLM lag terms
+
+G-computation outputs are stored in `02_Output/G-Form/`:
+
+- `Summary_results/` — Point estimates and bootstrap CIs by scenario
+- `Interventions/` — Counterfactual exposure histories (RDS)
+- `WeeklyEffects/`, `PopulationEffects/` — Detailed effect objects
+
+**Note**: Individual-level birth records cannot be publicly shared due to Chilean data protection regulations. Aggregated results and analysis code are available in this repository.
+
+---
+
+## :computer: Reproducibility
+
+### System Requirements
+
+- R ≥ 4.0.0
+- Python 3 (for NDVI extraction via Google Earth Engine)
+- Recommended: ≥ 16 GB RAM; Linux server for parallel g-computation
+
+### Required R Packages
+
+Automatically installed via `00_Code/0.2 Packages.R` and `00_Code/0.2 Packages_gform.R`:
+
+- **Data manipulation**: `tidyverse`, `data.table`, `janitor`, `rio`
+- **Spatial analysis**: `chilemapas`, `sf`, `rnaturalearth`
+- **Survival analysis**: `survival`, `flexsurv`, `survminer`
+- **Distributed lag / splines**: `dlnm`, `splines`, `mgcv`
+- **Parallel computing**: `future`, `furrr`, `doParallel`
+- **Visualization**: `ggplot2`, `patchwork`, `ggpubr`, `RColorBrewer`
+- **Imputation**: `imputeTS`, `zoo`
+
+### Running the Analysis
+
+1. **Setup**:
+   ```r
+   source("00_Code/0.1 Settings.R")
+   source("00_Code/0.2 Packages.R")
+   source("00_Code/0.3 Functions.R")
+   ```
+
+2. **Data processing** (run in order):
+   ```r
+   source("00_Code/1.0 Pollution_process_data.R")
+   source("00_Code/2.0 Births_process_data.R")
+   source("00_Code/3.1 Temp_NDVI_data.R")
+   source("00_Code/4.0 Climate_data_generate.R")
+   source("00_Code/5.0 Exposure_data_births.R")
+   source("00_Code/6.0 Join_full_data.R")
+   ```
+
+3. **Descriptive analysis**:
+   ```r
+   source("00_Code/7.0 Descriptive_births.R")
+   source("00_Code/7.1 Descriptive_exposition.R")
+   source("00_Code/8.0 Correlation_pollulants.R")
+   ```
+
+4. **Distributed-lag models**:
+   ```r
+   source("00_Code/9.0 DLM_pollution.R")
+   source("00_Code/9.1 DLM_plots.R")
+   ```
+
+5. **G-computation** (two stages):
+   ```r
+   # Stage 1: build intervention objects (run once)
+   source("00_Code/10.0 G-Form_build_interventions.R")
+
+   # Stage 2: run models, bootstrap, and heatmaps
+   source("00_Code/10.2 G-Form_models.R")
+   source("00_Code/10.3 G-Form_plots.R")
+   source("00_Code/10.4 G-Form_table.R")
+   ```
+
+   For server/parallel execution:
+   ```bash
+   GFORM_EXEC_MODE=server Rscript "00_Code/10.2 G-Form_models.R"
+   ```
+
+### Notes on Computation Time
+
+- **Birth data processing** (`2.0`): moderate (depends on raw file size)
+- **Weekly exposure expansion** (`5.0`, `6.0`): several hours (large longitudinal dataset)
+- **DLM Cox models** (`9.0`): ~20–30 minutes per pollutant/method
+- **G-computation bootstrap** (`10.2`): several hours to days (250–500 bootstrap replicates; parallelized on server)
+- **Total pipeline**: plan for multi-hour to overnight runs on a modern workstation or Linux server
+
+Detailed methodological notes: `02_Output/Notas_G-Formula_resultados.md`
+
+---
+
+## :open_book: Codebook
+
+### Birth Variables
+
+- `id`: Unique birth identifier
+- `com`: Municipality code
+- `name_com`: Municipality name
+- `weeks`: Gestational age at delivery (weeks)
+- `date_nac`: Date of birth
+- `sex`: Infant sex (Boy/Girl)
+- `tbw`: Birth weight (grams)
+- `birth_preterm`: Preterm birth indicator (<37 weeks)
+- `birth_very_preterm`: Very preterm (28–31 weeks)
+- `birth_moderately_preterm`: Moderate preterm (32–33 weeks)
+- `birth_late_preterm`: Late preterm (34–36 weeks)
+
+### Parental and Context Variables
+
+- `age_group_mom`, `educ_group_mom`, `job_group_mom`: Maternal age, education, employment
+- `age_group_dad`, `educ_group_dad`, `job_group_dad`: Paternal age, education, employment
+- `month_week1`, `year_week1`: Month and year of last menstrual period
+- `covid`: COVID-19 period indicator
+- `vulnerability`: SOVI category (Low, Medium-low, Medium-high)
+
+### Exposure Variables
+
+- `pm25_krg`, `no2_krg`, `o3_krg`: Weekly kriging-interpolated concentrations
+- `pm25_idw`, `no2_idw`, `o3_idw`: Weekly IDW-interpolated concentrations (sensitivity)
+- `tad`: Weekly mean ambient temperature
+- `ndvi_full`: Municipality-level NDVI (full pregnancy average)
+- Lag term (`Liw`): Time-weighted cumulative lag through prior gestational weeks
+
+---
+
+## :microscope: Methods Detail
+
+### Distributed-Lag Exposure
+
+For gestational week \(w \geq 2\):
+
+\[
+L_{iw} = \sum_{s=1}^{w-1} \frac{X_{is}}{w - s}
+\]
+
+### Exclusion Criteria
+
+Births were excluded if:
+
+- Outside urban Metropolitan Santiago (33 comunas + Puente Alto)
+- Missing date of birth, gestational age, or municipality
+- Maternal age <12 or >50 years
+- Gestational age <28 weeks
+- Multiple births
+- Missing covariates
+- Implausible birthweight-for-gestational-age (Alexander et al., 1996)
+- Fixed-cohort bias: gestational window not fully observed within 2010–2020
+
+### G-Computation Interventions
+
+**Threshold (cap)**:
+
+\[
+X'_{iw} = \min(X_{iw}, c)
+\]
+
+**Proportional reduction (20%)**:
+
+\[
+X'_{iw} = X_{iw} \times (1 - 0.20)
+\]
+
+**Single-week reduction**: Apply 20% reduction only in week \(j\); all other weeks remain at observed values.
+
+Population metrics at week 36: prevalence, expected cases, risk ratio (RR), risk difference (RD), attributable risk (AR), and population attributable fraction (PAF).
+
+---
+
+## :file_cabinet: Repository Structure
+
+```
+Contamination_PTB_G-Formula/
+├── 00_Code/                        # Analysis scripts
+│   ├── 0.1–0.3                     # Settings, packages, functions
+│   ├── 1.0–8.0                     # Data processing and descriptives
+│   ├── 9.0–9.1                     # Distributed-lag Cox models
+│   ├── 10.0–10.4                   # G-computation pipeline
+│   └── old_code/                   # Archived scripts
+├── 01_Data/
+│   ├── Input/                      # Raw data (not publicly available)
+│   └── Output/                     # Processed analytical datasets
+├── 02_Output/
+│   ├── Descriptives/               # Tables and descriptive plots
+│   ├── Models/                     # DLM results and figures
+│   ├── G-Form/                     # G-computation outputs
+│   └── idw_vs_kriging/             # Interpolation comparison
+├── 03_Paper/                       # Manuscript and supplementary material
+│   ├── CTA_PTB_Gf_Manuscript.docx
+│   └── CTA_PTB_Gf_Supplementary_Material.docx
+├── 04_Conference/                  # Conference abstracts
+└── README.md
+```
+
+---
+
+## :warning: Important Notes
+
+### Data Privacy
+
+Individual-level birth records are confidential and cannot be shared publicly. Researchers interested in data access should contact the Chilean Ministry of Health (DEIS).
+
+### Air Quality and Climate Data
+
+- National air-quality network: Chilean Ministry of Environment
+- CR2MET: [Center for Climate and Resilience Research (CR²)](http://www.cr2.cl/datos-productos-grillados/)
+
+### Citation
+
+If you use this code or methodology, please cite:
+
+> Blanco, E., Conejeros, J.D., Bravo, I., Cornejo, F., Osses, A., & Benmarhnia, T. Estimating the perinatal health benefits of hypothetical pollution interventions in Santiago, Chile using parametric g-computation. *Under Review*. 2025.
+
+---
+
+## :email: Contact
+
+For questions about the code or methodology:
+
+- **Estela Blanco**: <estela.blanco@uc.cl>
+- **José Daniel Conejeros**: <jdconejeros@uc.cl>
+
+For data access inquiries:
+
+- Chilean Ministry of Health: [https://www.minsal.cl](https://www.minsal.cl)
+
+---
+
+## :page_facing_up: License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+---
+
+## :handshake: Acknowledgments
+
+This research was supported by FONDECYT de Iniciación en Investigación Nº 11240322 and the Center for Climate and Resilience Research (CR²), FONDAP/ANID 1523A0002. We thank the Chilean Ministry of Health (DEIS) for access to birth records, the national air-quality monitoring network for pollution data, and CR² for climate data.
+
+**Data sources**:
+
+- Birth records: DEIS, Chilean Ministry of Health
+- Air pollution: National air-quality monitoring network (SINCA)
+- Temperature: CR2MET v2.5, Center for Climate and Resilience Research, Universidad de Chile
+- NDVI: MODIS MOD13Q1 via Google Earth Engine

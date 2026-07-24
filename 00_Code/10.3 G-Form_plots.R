@@ -46,23 +46,39 @@ pollutant_scenarios <- list(
   pm25 = list(
     list(stub = "pm25_lt20", series = "lt20"),
     list(stub = "pm25_lt5", series = "lt5"),
-    list(stub = "pm25_pct20", series = "pct20")
+    list(stub = "pm25_pct10", series = "pct10"),
+    list(stub = "pm25_pct20", series = "pct20"),
+    list(stub = "pm25_pct30", series = "pct30")
   ),
   no2 = list(
     list(stub = "no2_lt20", series = "lt20"),
     list(stub = "no2_lt5", series = "lt5"),
-    list(stub = "no2_pct20", series = "pct20")
+    list(stub = "no2_pct10", series = "pct10"),
+    list(stub = "no2_pct20", series = "pct20"),
+    list(stub = "no2_pct30", series = "pct30")
   ),
   o3 = list(
-    list(stub = "o3_pct20", series = "pct20")
+    list(stub = "o3_pct10", series = "pct10"),
+    list(stub = "o3_pct20", series = "pct20"),
+    list(stub = "o3_pct30", series = "pct30")
   )
 )
 
 heatmap_rows <- list(
+  pct10 = list(
+    pm25 = "pm25_pct10",
+    no2 = "no2_pct10",
+    o3 = "o3_pct10"
+  ),
   pct20 = list(
     pm25 = "pm25_pct20",
     no2 = "no2_pct20",
     o3 = "o3_pct20"
+  ),
+  pct30 = list(
+    pm25 = "pm25_pct30",
+    no2 = "no2_pct30",
+    o3 = "o3_pct30"
   ),
   lt20 = list(
     pm25 = "pm25_lt20",
@@ -85,7 +101,7 @@ label_rd_legend <- scales::label_number(accuracy = 0.00001)
 axis_title_size <- 9
 fig_width <- 30
 fig_height <- 12
-heatmap_fig_height <- 34
+heatmap_fig_height <- 57
 heatmap_legend_barwidth <- 2.6
 heatmap_legend_barheight <- 0.35
 
@@ -99,32 +115,48 @@ legend_series_levels <- c(
   "Natural Course",
   "< 20 limit",
   "< 5 limit",
-  "Reduced by 20%"
+  "Reduced by 10%",
+  "Reduced by 20%",
+  "Reduced by 30%"
 )
 
 series_colours <- c(
   "Natural Course" = "#8C8C8C",
   "< 20 limit" = "#E41A1C",
   "< 5 limit" = "#377EB8",
-  "Reduced by 20%" = "#4DAF4A"
+  "Reduced by 10%" = "#984EA3",
+  "Reduced by 20%" = "#4DAF4A",
+  "Reduced by 30%" = "#FF7F00"
 )
 series_linetypes <- c(
   "Natural Course" = "solid",
   "< 20 limit" = "22",
   "< 5 limit" = "44",
-  "Reduced by 20%" = "1313"
+  "Reduced by 10%" = "6666",
+  "Reduced by 20%" = "1313",
+  "Reduced by 30%" = "1199"
 )
 series_linewidths <- c(
   "Natural Course" = 0.65,
   "< 20 limit" = 0.45,
   "< 5 limit" = 0.45,
-  "Reduced by 20%" = 0.45
+  "Reduced by 10%" = 0.45,
+  "Reduced by 20%" = 0.45,
+  "Reduced by 30%" = 0.45
 )
 
 series_key_to_label <- c(
   lt20 = "< 20 limit",
   lt5 = "< 5 limit",
-  pct20 = "Reduced by 20%"
+  pct10 = "Reduced by 10%",
+  pct20 = "Reduced by 20%",
+  pct30 = "Reduced by 30%"
+)
+
+pct_row_labels <- c(
+  pct10 = "Reduced by 10%",
+  pct20 = "Reduced by 20%",
+  pct30 = "Reduced by 30%"
 )
 
 gform_panel_theme <- function() {
@@ -306,12 +338,12 @@ plot_cumulative_risk_panel <- function(df, panel_title, y_upper, y_breaks) {
     ggplot2::theme(
       legend.position = "top",
       legend.title = ggplot2::element_blank(),
-      legend.text = ggplot2::element_text(size = 8)
+      legend.text = ggplot2::element_text(size = 7)
     ) +
     ggplot2::guides(
       colour = ggplot2::guide_legend(
         order = 1,
-        nrow = 1,
+        nrow = 2,
         override.aes = list(
           linetype = series_linetypes,
           linewidth = series_linewidths
@@ -501,8 +533,8 @@ heatmap_panel_theme <- function(
 }
 
 heatmap_subtitle <- function(pollutant, row_id) {
-  if (row_id == "pct20") {
-    return("Reduced by 20%")
+  if (row_id %in% names(pct_row_labels)) {
+    return(unname(pct_row_labels[[row_id]]))
   }
   cap_labels[[pollutant]][[row_id]]
 }
@@ -722,7 +754,7 @@ ggplot2::ggsave(
 )
 message("Panel de mapa de calor RD guardado: ", path_heatmap)
 message(
-  "  Filas: pct20, lt20, lt5 | Columnas: PM2.5, NO2, O3 (O3 vacío en lt20/lt5)"
+  "  Filas: pct10, pct20, pct30, lt20, lt5 | Columnas: PM2.5, NO2, O3 (O3 vacío en lt20/lt5)"
 )
 message(
   "  Escalas RD por contaminante: PM2.5 [-0.00025, 0.00025], ",

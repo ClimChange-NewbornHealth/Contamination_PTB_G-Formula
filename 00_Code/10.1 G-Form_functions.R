@@ -517,7 +517,13 @@ GFORM_INTERVENTION_ORDER <- c(
   "pm25_krg_lt15",
   "pm25_krg_lt10",
   "no2_krg_lt15",
-  "no2_krg_lt10"
+  "no2_krg_lt10",
+  "pm25_krg_pct10",
+  "pm25_krg_pct30",
+  "no2_krg_pct10",
+  "no2_krg_pct30",
+  "o3_krg_pct10",
+  "o3_krg_pct30"
 )
 
 ## Registro completo de intervenciones globales (ver intervention.txt) ----
@@ -551,12 +557,26 @@ GFORM_INTERVENTION_REGISTRY <- list(
     intervention = list(type = "cap", cap = 5),
     description = "PM2.5 < 5 µg/m³ cada semana gestacional"
   ),
+  pm25_krg_pct10 = list(
+    pollutant = "pm25_krg",
+    intervention_id = "pm25_krg_pct10",
+    output_stub = "pm25_pct10",
+    intervention = list(type = "pct_reduce", pct = 0.10),
+    description = "PM2.5 reducción 10% cada semana gestacional"
+  ),
   pm25_krg_pct20 = list(
     pollutant = "pm25_krg",
     intervention_id = "pm25_krg_pct20",
     output_stub = "pm25_pct20",
     intervention = list(type = "pct_reduce", pct = 0.20),
     description = "PM2.5 reducción 20% cada semana gestacional"
+  ),
+  pm25_krg_pct30 = list(
+    pollutant = "pm25_krg",
+    intervention_id = "pm25_krg_pct30",
+    output_stub = "pm25_pct30",
+    intervention = list(type = "pct_reduce", pct = 0.30),
+    description = "PM2.5 reducción 30% cada semana gestacional"
   ),
   no2_krg_lt20 = list(
     pollutant = "no2_krg",
@@ -586,6 +606,13 @@ GFORM_INTERVENTION_REGISTRY <- list(
     intervention = list(type = "cap", cap = 5),
     description = "NO2 < 5 ppbv cada semana gestacional"
   ),
+  no2_krg_pct10 = list(
+    pollutant = "no2_krg",
+    intervention_id = "no2_krg_pct10",
+    output_stub = "no2_pct10",
+    intervention = list(type = "pct_reduce", pct = 0.10),
+    description = "NO2 reducción 10% cada semana gestacional"
+  ),
   no2_krg_pct20 = list(
     pollutant = "no2_krg",
     intervention_id = "no2_krg_pct20",
@@ -593,12 +620,33 @@ GFORM_INTERVENTION_REGISTRY <- list(
     intervention = list(type = "pct_reduce", pct = 0.20),
     description = "NO2 reducción 20% cada semana gestacional"
   ),
+  no2_krg_pct30 = list(
+    pollutant = "no2_krg",
+    intervention_id = "no2_krg_pct30",
+    output_stub = "no2_pct30",
+    intervention = list(type = "pct_reduce", pct = 0.30),
+    description = "NO2 reducción 30% cada semana gestacional"
+  ),
+  o3_krg_pct10 = list(
+    pollutant = "o3_krg",
+    intervention_id = "o3_krg_pct10",
+    output_stub = "o3_pct10",
+    intervention = list(type = "pct_reduce", pct = 0.10),
+    description = "O3 reducción 10% cada semana gestacional"
+  ),
   o3_krg_pct20 = list(
     pollutant = "o3_krg",
     intervention_id = "o3_krg_pct20",
     output_stub = "o3_pct20",
     intervention = list(type = "pct_reduce", pct = 0.20),
     description = "O3 reducción 20% cada semana gestacional"
+  ),
+  o3_krg_pct30 = list(
+    pollutant = "o3_krg",
+    intervention_id = "o3_krg_pct30",
+    output_stub = "o3_pct30",
+    intervention = list(type = "pct_reduce", pct = 0.30),
+    description = "O3 reducción 30% cada semana gestacional"
   )
 )
 

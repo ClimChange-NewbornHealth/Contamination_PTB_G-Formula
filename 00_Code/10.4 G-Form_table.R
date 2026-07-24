@@ -5,7 +5,7 @@
 #
 # Entrada:
 #   02_Output/G-Form/Summary_results/{stub}_point_estimates.xlsx
-#     stubs: pm25/no2/o3 _pct20, _lt20, _lt15, _lt10, _lt5 (según disponibilidad)
+#     stubs: pm25/no2/o3 _pct10/_pct20/_pct30, _lt20, _lt15, _lt10, _lt5 (según disponibilidad)
 #   02_Output/G-Form/Bootstrap/{stub}/population_boot.csv  (IC de PAF si existe)
 # Salida:
 #   02_Output/G-Form/Summary_results/Table_population_effects_summary.xlsx
@@ -47,7 +47,9 @@ pollutant_specs <- list(
       list(stub = "pm25_lt15", label = "< 15 \u00b5g/m\u00b3"),
       list(stub = "pm25_lt10", label = "< 10 \u00b5g/m\u00b3"),
       list(stub = "pm25_lt5", label = "< 5 \u00b5g/m\u00b3"),
-      list(stub = "pm25_pct20", label = "Reduced by 20%")
+      list(stub = "pm25_pct10", label = "Reduced by 10%"),
+      list(stub = "pm25_pct20", label = "Reduced by 20%"),
+      list(stub = "pm25_pct30", label = "Reduced by 30%")
     )
   ),
   no2 = list(
@@ -58,14 +60,18 @@ pollutant_specs <- list(
       list(stub = "no2_lt15", label = "< 15 ppbv"),
       list(stub = "no2_lt10", label = "< 10 ppbv"),
       list(stub = "no2_lt5", label = "< 5 ppbv"),
-      list(stub = "no2_pct20", label = "Reduced by 20%")
+      list(stub = "no2_pct10", label = "Reduced by 10%"),
+      list(stub = "no2_pct20", label = "Reduced by 20%"),
+      list(stub = "no2_pct30", label = "Reduced by 30%")
     )
   ),
   o3 = list(
     stub_prefix = "o3",
     section_label = "O3 (ppbv)",
     scenarios = list(
-      list(stub = "o3_pct20", label = "Reduced by 20%")
+      list(stub = "o3_pct10", label = "Reduced by 10%"),
+      list(stub = "o3_pct20", label = "Reduced by 20%"),
+      list(stub = "o3_pct30", label = "Reduced by 30%")
     )
   )
 )

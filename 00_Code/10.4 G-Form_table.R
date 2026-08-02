@@ -112,6 +112,13 @@ format_gform_table_num <- function(x) {
   formatC(x, format = "f", digits = 4, decimal.mark = ".")
 }
 
+format_gform_table_rr_num <- function(x) {
+  if (length(x) != 1L || is.na(x) || !is.finite(x)) {
+    return(NA_character_)
+  }
+  formatC(x, format = "f", digits = 3, decimal.mark = ".")
+}
+
 format_gform_table_percent_num <- function(x) {
   if (length(x) != 1L || is.na(x) || !is.finite(x)) {
     return(NA_character_)
@@ -119,8 +126,19 @@ format_gform_table_percent_num <- function(x) {
   formatC(x, format = "f", digits = 2, decimal.mark = ".")
 }
 
-format_estimate_ci <- function(est, lcl, ucl, percent_display = FALSE) {
-  fmt <- if (percent_display) format_gform_table_percent_num else format_gform_table_num
+format_estimate_ci <- function(
+    est,
+    lcl,
+    ucl,
+    percent_display = FALSE,
+    num_fmt = NULL) {
+  fmt <- if (!is.null(num_fmt)) {
+    num_fmt
+  } else if (percent_display) {
+    format_gform_table_percent_num
+  } else {
+    format_gform_table_num
+  }
   est_chr <- fmt(est)
   lcl_chr <- fmt(lcl)
   ucl_chr <- fmt(ucl)
@@ -132,11 +150,13 @@ format_estimate_ci <- function(est, lcl, ucl, percent_display = FALSE) {
 
 format_metric_row <- function(row, metric_name, scale = 1) {
   cols <- metric_specs[[metric_name]]
+  num_fmt <- if (metric_name == "risk_ratio") format_gform_table_rr_num else NULL
   format_estimate_ci(
     row[[cols[[1]]]] * scale,
     row[[cols[[2]]]] * scale,
     row[[cols[[3]]]] * scale,
-    percent_display = scale != 1
+    percent_display = scale != 1,
+    num_fmt = num_fmt
   )
 }
 

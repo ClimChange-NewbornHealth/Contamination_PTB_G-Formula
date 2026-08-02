@@ -4,8 +4,10 @@
 #   Rscript "00_Code/10.3 G-Form_plots.R"
 #
 # Salida:
-#   02_Output/G-Form/Figures/Figure_cumulative_risk_interventions.png
-#   02_Output/G-Form/Figures/Figure_heatmap_rd_interventions.png
+#   02_Output/G-Form/Figures/Figure_cumulative_risk_interventions_absolute.png  (PM2.5, NO2; lt5/10/15/20)
+#   02_Output/G-Form/Figures/Figure_cumulative_risk_interventions_percent.png   (PM2.5, NO2, O3; pct10/20/30)
+#   02_Output/G-Form/Figures/Figure_heatmap_rd_interventions_absolute.png       (filas lt5→lt20)
+#   02_Output/G-Form/Figures/Figure_heatmap_rd_interventions_percent.png      (filas pct10/20/30)
 #   02_Output/G-Form/Summary_results/heatmap_rd_min_max_by_scenario.xlsx
 
 source("00_Code/0.1 Settings.R")
@@ -29,7 +31,7 @@ dir_figures <- file.path(data_out_g, "Figures")
 dir_summary <- file.path(data_out_g, "Summary_results")
 dir_heatmap <- file.path(data_out_g, "Heatmap")
 
-pollutants <- c("pm25", "no2", "o3")
+all_pollutants <- c("pm25", "no2", "o3")
 
 panel_titles <- list(
   pm25 = expression("A. PM"[2.5]),
@@ -38,13 +40,25 @@ panel_titles <- list(
 )
 
 cap_labels <- list(
-  pm25 = list(lt20 = "< 20 \u00b5g/m\u00b3", lt5 = "< 5 \u00b5g/m\u00b3"),
-  no2 = list(lt20 = "< 20 ppbv", lt5 = "< 5 ppbv")
+  pm25 = list(
+    lt20 = "< 20 \u00b5g/m\u00b3",
+    lt15 = "< 15 \u00b5g/m\u00b3",
+    lt10 = "< 10 \u00b5g/m\u00b3",
+    lt5 = "< 5 \u00b5g/m\u00b3"
+  ),
+  no2 = list(
+    lt20 = "< 20 ppbv",
+    lt15 = "< 15 ppbv",
+    lt10 = "< 10 ppbv",
+    lt5 = "< 5 ppbv"
+  )
 )
 
 pollutant_scenarios <- list(
   pm25 = list(
     list(stub = "pm25_lt20", series = "lt20"),
+    list(stub = "pm25_lt15", series = "lt15"),
+    list(stub = "pm25_lt10", series = "lt10"),
     list(stub = "pm25_lt5", series = "lt5"),
     list(stub = "pm25_pct10", series = "pct10"),
     list(stub = "pm25_pct20", series = "pct20"),
@@ -52,6 +66,8 @@ pollutant_scenarios <- list(
   ),
   no2 = list(
     list(stub = "no2_lt20", series = "lt20"),
+    list(stub = "no2_lt15", series = "lt15"),
+    list(stub = "no2_lt10", series = "lt10"),
     list(stub = "no2_lt5", series = "lt5"),
     list(stub = "no2_pct10", series = "pct10"),
     list(stub = "no2_pct20", series = "pct20"),
@@ -85,6 +101,16 @@ heatmap_rows <- list(
     no2 = "no2_lt20",
     o3 = NA_character_
   ),
+  lt15 = list(
+    pm25 = "pm25_lt15",
+    no2 = "no2_lt15",
+    o3 = NA_character_
+  ),
+  lt10 = list(
+    pm25 = "pm25_lt10",
+    no2 = "no2_lt10",
+    o3 = NA_character_
+  ),
   lt5 = list(
     pm25 = "pm25_lt5",
     no2 = "no2_lt5",
@@ -92,29 +118,88 @@ heatmap_rows <- list(
   )
 )
 
+metric_configs <- list(
+  absolute = list(
+    suffix = "absolute",
+    pollutants = c("pm25", "no2"),
+    scenario_series = c("lt5", "lt10", "lt15", "lt20"),
+    heatmap_row_ids = c("lt5", "lt10", "lt15", "lt20"),
+    legend_levels = c(
+      "Natural Course",
+      "< 5",
+      "< 10",
+      "< 15",
+      "< 20"
+    ),
+    legend_nrow = 1L,
+    risk_scale = 1,
+    cumulative_y_label = "Risk of Birth",
+    heatmap_fill_label = "Risk Difference",
+    label_fn = scales::label_number(accuracy = 0.00001),
+    heatmap_rd_limits = c(
+      pm25 = 0.00025,
+      no2 = 0.00020
+    )
+  ),
+  percent = list(
+    suffix = "percent",
+    pollutants = c("pm25", "no2", "o3"),
+    scenario_series = c("pct10", "pct20", "pct30"),
+    heatmap_row_ids = c("pct10", "pct20", "pct30"),
+    legend_levels = c(
+      "Natural Course",
+      "Reduced by 10%",
+      "Reduced by 20%",
+      "Reduced by 30%"
+    ),
+    legend_nrow = 1L,
+    series_colours = c(
+      "Natural Course" = "#8C8C8C",
+      "Reduced by 10%" = "#7FBF7F",
+      "Reduced by 20%" = "#F4A861",
+      "Reduced by 30%" = "#7EB6D9"
+    ),
+    series_linetypes = c(
+      "Natural Course" = "solid",
+      "Reduced by 10%" = "22",
+      "Reduced by 20%" = "44",
+      "Reduced by 30%" = "6666"
+    ),
+    series_linewidths = c(
+      "Natural Course" = 0.65,
+      "Reduced by 10%" = 0.45,
+      "Reduced by 20%" = 0.45,
+      "Reduced by 30%" = 0.45
+    ),
+    risk_scale = 100,
+    cumulative_y_label = "Risk of Birth (%)",
+    heatmap_fill_label = "Risk Difference (pp)",
+    label_fn = scales::label_number(accuracy = 0.01),
+    heatmap_rd_limits = c(
+      pm25 = 0.025,
+      no2 = 0.020,
+      o3 = 0.045
+    )
+  )
+)
 
 follow_up_weeks <- 28:36
 intervention_week_range <- c(0L, 44L)
 fig_dpi <- 300
-label_5dec <- scales::label_number(accuracy = 0.00001)
-label_rd_legend <- scales::label_number(accuracy = 0.00001)
 axis_title_size <- 9
-fig_width <- 30
+fig_width_3col <- 30
+fig_width_2col <- 30
 fig_height <- 12
-heatmap_fig_height <- 57
+heatmap_row_height <- 11.4
 heatmap_legend_barwidth <- 2.6
 heatmap_legend_barheight <- 0.35
 
-heatmap_rd_limits <- c(
-  pm25 = 0.00025,
-  no2 = 0.00020,
-  o3 = 0.00045
-)
-
 legend_series_levels <- c(
   "Natural Course",
-  "< 20 limit",
-  "< 5 limit",
+  "< 5",
+  "< 10",
+  "< 15",
+  "< 20",
   "Reduced by 10%",
   "Reduced by 20%",
   "Reduced by 30%"
@@ -122,32 +207,40 @@ legend_series_levels <- c(
 
 series_colours <- c(
   "Natural Course" = "#8C8C8C",
-  "< 20 limit" = "#E41A1C",
-  "< 5 limit" = "#377EB8",
+  "< 5" = "#377EB8",
+  "< 10" = "#4DAF4A",
+  "< 15" = "#FF7F00",
+  "< 20" = "#E41A1C",
   "Reduced by 10%" = "#984EA3",
-  "Reduced by 20%" = "#4DAF4A",
-  "Reduced by 30%" = "#FF7F00"
+  "Reduced by 20%" = "#A65628",
+  "Reduced by 30%" = "#F781BF"
 )
 series_linetypes <- c(
   "Natural Course" = "solid",
-  "< 20 limit" = "22",
-  "< 5 limit" = "44",
-  "Reduced by 10%" = "6666",
-  "Reduced by 20%" = "1313",
-  "Reduced by 30%" = "1199"
+  "< 5" = "44",
+  "< 10" = "6666",
+  "< 15" = "1313",
+  "< 20" = "22",
+  "Reduced by 10%" = "1199",
+  "Reduced by 20%" = "1F1F",
+  "Reduced by 30%" = "F1F1"
 )
 series_linewidths <- c(
   "Natural Course" = 0.65,
-  "< 20 limit" = 0.45,
-  "< 5 limit" = 0.45,
+  "< 5" = 0.45,
+  "< 10" = 0.45,
+  "< 15" = 0.45,
+  "< 20" = 0.45,
   "Reduced by 10%" = 0.45,
   "Reduced by 20%" = 0.45,
   "Reduced by 30%" = 0.45
 )
 
 series_key_to_label <- c(
-  lt20 = "< 20 limit",
-  lt5 = "< 5 limit",
+  lt5 = "< 5",
+  lt10 = "< 10",
+  lt15 = "< 15",
+  lt20 = "< 20",
   pct10 = "Reduced by 10%",
   pct20 = "Reduced by 20%",
   pct30 = "Reduced by 30%"
@@ -240,8 +333,22 @@ load_heatmap_stub <- function(stub) {
   NULL
 }
 
-build_pollutant_curves_long <- function(pollutant) {
+scale_curves_df <- function(df, risk_scale) {
+  df |>
+    dplyr::mutate(cumulative_risk = .data$cumulative_risk * risk_scale)
+}
+
+scale_heatmap_df <- function(df, risk_scale) {
+  df |>
+    dplyr::mutate(risk_difference = .data$risk_difference * risk_scale)
+}
+
+build_pollutant_curves_long <- function(pollutant, risk_scale, scenario_series, legend_levels) {
   scenarios <- pollutant_scenarios[[pollutant]]
+  scenarios <- Filter(
+    function(sc) sc$series %in% scenario_series,
+    scenarios
+  )
   available <- Filter(
     function(sc) file.exists(scenario_excel_path(sc$stub)),
     scenarios
@@ -273,24 +380,25 @@ build_pollutant_curves_long <- function(pollutant) {
   }
 
   out |>
+    scale_curves_df(risk_scale) |>
+    dplyr::filter(.data$series %in% legend_levels) |>
     dplyr::mutate(
-      series = factor(.data$series, levels = legend_series_levels)
+      series = factor(.data$series, levels = legend_levels)
     )
 }
 
-## ===== Datos =====
-dir.create(dir_figures, recursive = TRUE, showWarnings = FALSE)
-
-curves_by_pollutant <- lapply(pollutants, build_pollutant_curves_long)
-names(curves_by_pollutant) <- pollutants
-
-## ===== Panel: riesgo acumulado (todas las intervenciones por contaminante) =====
-y_vals <- unlist(lapply(curves_by_pollutant, function(df) df$cumulative_risk))
-y_max <- max(y_vals, na.rm = TRUE)
-y_upper <- ceiling(y_max * 1e5 * 1.02) / 1e5
-y_breaks <- scales::pretty_breaks(n = 8)(c(0, y_upper))
-
-plot_cumulative_risk_panel <- function(df, panel_title, y_upper, y_breaks) {
+plot_cumulative_risk_panel <- function(
+    df,
+    panel_title,
+    y_upper,
+    y_breaks,
+    y_label,
+    label_fn,
+    legend_levels,
+    legend_nrow = 1L,
+    series_colours_map = series_colours,
+    series_linetypes_map = series_linetypes,
+    series_linewidths_map = series_linewidths) {
   ggplot2::ggplot(
     df,
     ggplot2::aes(
@@ -309,27 +417,27 @@ plot_cumulative_risk_panel <- function(df, panel_title, y_upper, y_breaks) {
     ggplot2::scale_y_continuous(
       limits = c(0, y_upper),
       breaks = y_breaks,
-      labels = label_5dec
+      labels = label_fn
     ) +
     ggplot2::scale_colour_manual(
-      values = series_colours,
-      breaks = legend_series_levels,
+      values = series_colours_map,
+      breaks = legend_levels,
       drop = FALSE
     ) +
     ggplot2::scale_linetype_manual(
-      values = series_linetypes,
-      breaks = legend_series_levels,
+      values = series_linetypes_map,
+      breaks = legend_levels,
       drop = FALSE
     ) +
     ggplot2::scale_linewidth_manual(
-      values = series_linewidths,
-      breaks = legend_series_levels,
+      values = series_linewidths_map,
+      breaks = legend_levels,
       drop = FALSE
     ) +
     ggplot2::labs(
       title = panel_title,
       x = "Gestational Weeks",
-      y = "Risk of Birth",
+      y = y_label,
       colour = NULL,
       linetype = NULL,
       linewidth = NULL
@@ -338,15 +446,16 @@ plot_cumulative_risk_panel <- function(df, panel_title, y_upper, y_breaks) {
     ggplot2::theme(
       legend.position = "top",
       legend.title = ggplot2::element_blank(),
-      legend.text = ggplot2::element_text(size = 7)
+      legend.text = ggplot2::element_text(size = 7),
+      plot.margin = ggplot2::margin(4, 4, 4, 4)
     ) +
     ggplot2::guides(
       colour = ggplot2::guide_legend(
         order = 1,
-        nrow = 2,
+        nrow = legend_nrow,
         override.aes = list(
-          linetype = series_linetypes,
-          linewidth = series_linewidths
+          linetype = series_linetypes_map[legend_levels],
+          linewidth = series_linewidths_map[legend_levels]
         )
       ),
       linetype = "none",
@@ -354,73 +463,84 @@ plot_cumulative_risk_panel <- function(df, panel_title, y_upper, y_breaks) {
     )
 }
 
-p_cumulative_pm25 <- plot_cumulative_risk_panel(
-  curves_by_pollutant$pm25,
-  panel_titles$pm25,
-  y_upper,
-  y_breaks
-)
-p_cumulative_no2 <- plot_cumulative_risk_panel(
-  curves_by_pollutant$no2,
-  panel_titles$no2,
-  y_upper,
-  y_breaks
-)
-p_cumulative_o3 <- plot_cumulative_risk_panel(
-  curves_by_pollutant$o3,
-  panel_titles$o3,
-  y_upper,
-  y_breaks
-)
+build_cumulative_risk_figure <- function(metric_cfg) {
+  pollutants <- metric_cfg$pollutants
+  curves_by_pollutant <- stats::setNames(
+    lapply(
+      pollutants,
+      build_pollutant_curves_long,
+      risk_scale = metric_cfg$risk_scale,
+      scenario_series = metric_cfg$scenario_series,
+      legend_levels = metric_cfg$legend_levels
+    ),
+    pollutants
+  )
 
-p_cumulative_panel <- ggpubr::ggarrange(
-  p_cumulative_pm25,
-  p_cumulative_no2,
-  p_cumulative_o3,
-  ncol = 3,
-  common.legend = TRUE,
-  legend = "top"
-)
+  y_vals <- unlist(lapply(curves_by_pollutant, function(df) df$cumulative_risk))
+  y_max <- max(y_vals, na.rm = TRUE)
+  y_upper <- ceiling(y_max * 1e5 * 1.02) / 1e5
+  y_breaks <- scales::pretty_breaks(n = 8)(c(0, y_upper))
 
-path_cumulative <- file.path(dir_figures, "Figure_cumulative_risk_interventions.png")
-
-ggplot2::ggsave(
-  path_cumulative,
-  p_cumulative_panel,
-  width = fig_width,
-  height = fig_height,
-  units = "cm",
-  dpi = fig_dpi,
-  bg = "white"
-)
-message("Panel de riesgo acumulado guardado: ", path_cumulative)
-
-## ===== Tabla: min / max RD del heatmap por escenario =====
-heatmap_stubs <- unique(unlist(heatmap_rows, use.names = FALSE))
-heatmap_stubs <- heatmap_stubs[!is.na(heatmap_stubs) & nzchar(heatmap_stubs)]
-
-heatmap_rd_summary <- dplyr::bind_rows(lapply(heatmap_stubs, function(stub) {
-  hm <- load_heatmap_stub(stub)
-  if (is.null(hm)) {
-    return(NULL)
-  }
-  hm |>
-    dplyr::summarise(
-      scenario = stub,
-      min_risk_difference = min(.data$risk_difference, na.rm = TRUE),
-      max_risk_difference = max(.data$risk_difference, na.rm = TRUE),
-      .groups = "drop"
+  panel_plots <- lapply(seq_along(pollutants), function(i) {
+    pollutant <- pollutants[[i]]
+    title <- switch(
+      pollutant,
+      pm25 = expression("A. PM"[2.5]),
+      no2 = expression("B. NO"[2]),
+      o3 = expression("C. O"[3]),
+      panel_titles[[pollutant]]
     )
-}))
+    plot_cumulative_risk_panel(
+      curves_by_pollutant[[pollutant]],
+      title,
+      y_upper,
+      y_breaks,
+      metric_cfg$cumulative_y_label,
+      metric_cfg$label_fn,
+      metric_cfg$legend_levels,
+      legend_nrow = if (is.null(metric_cfg$legend_nrow)) 1L else metric_cfg$legend_nrow,
+    series_colours_map = if (!is.null(metric_cfg$series_colours)) {
+      metric_cfg$series_colours
+    } else {
+      series_colours
+    },
+    series_linetypes_map = if (!is.null(metric_cfg$series_linetypes)) {
+      metric_cfg$series_linetypes
+    } else {
+      series_linetypes
+    },
+    series_linewidths_map = if (!is.null(metric_cfg$series_linewidths)) {
+      metric_cfg$series_linewidths
+    } else {
+      series_linewidths
+    }
+    )
+  })
 
-path_heatmap_summary <- file.path(dir_summary, "heatmap_rd_min_max_by_scenario.xlsx")
-writexl::write_xlsx(heatmap_rd_summary, path = path_heatmap_summary)
-message("Tabla min/max RD guardada: ", path_heatmap_summary)
-print(heatmap_rd_summary)
+  fig_width <- if (length(pollutants) == 2L) fig_width_2col else fig_width_3col
+  panel_widths <- rep(1, length(pollutants))
 
-## ===== Panel: mapa de calor RD acumulado (3 filas × 3 columnas) =====
-panel_rd_lim <- function(hm, pollutant) {
-  cap <- heatmap_rd_limits[[pollutant]]
+  list(
+    plot = do.call(
+      ggpubr::ggarrange,
+      c(
+        panel_plots,
+        list(
+          ncol = length(pollutants),
+          nrow = 1,
+          widths = panel_widths,
+          align = "hv",
+          common.legend = TRUE,
+          legend = "top"
+        )
+      )
+    ),
+    width = fig_width
+  )
+}
+
+panel_rd_lim <- function(hm, pollutant, metric_cfg) {
+  cap <- metric_cfg$heatmap_rd_limits[[pollutant]]
   if (is.null(hm) || !nrow(hm)) {
     return(cap)
   }
@@ -429,10 +549,10 @@ panel_rd_lim <- function(hm, pollutant) {
     return(cap)
   }
   val <- min(cap, ceiling(val * 1e5 * 1.02) / 1e5)
-  max(val, 1e-5)
+  max(val, cap / 1000)
 }
 
-heatmap_fill_guide <- function(rd_lim) {
+heatmap_fill_guide <- function() {
   ggplot2::guide_colorbar(
     title.position = "left",
     title.hjust = 1,
@@ -467,18 +587,18 @@ heatmap_axis_scales <- function(
   )
 }
 
-heatmap_fill_scale <- function(rd_lim) {
+heatmap_fill_scale <- function(rd_lim, fill_label, label_fn) {
   ggplot2::scale_fill_gradient2(
-    name = "Risk Difference",
+    name = fill_label,
     low = "#B2182B",
     mid = "white",
     high = "#542788",
     midpoint = 0,
     limits = c(-rd_lim, rd_lim),
     breaks = c(-rd_lim, rd_lim),
-    labels = label_rd_legend(c(-rd_lim, rd_lim)),
+    labels = label_fn(c(-rd_lim, rd_lim)),
     oob = scales::squish,
-    guide = heatmap_fill_guide(rd_lim)
+    guide = heatmap_fill_guide()
   )
 }
 
@@ -539,11 +659,26 @@ heatmap_subtitle <- function(pollutant, row_id) {
   cap_labels[[pollutant]][[row_id]]
 }
 
+heatmap_panel_title <- function(pollutant, row_i) {
+  if (row_i != 1L) {
+    return(NULL)
+  }
+  switch(
+    pollutant,
+    pm25 = expression("A. PM"[2.5]),
+    no2 = expression("B. NO"[2]),
+    o3 = expression("C. O"[3]),
+    panel_titles[[pollutant]]
+  )
+}
+
 plot_heatmap_rd_panel <- function(
     data,
     main_title,
     subtitle,
     rd_lim,
+    fill_label,
+    label_fn,
     show_x_title = TRUE,
     show_x_text = TRUE) {
 
@@ -563,7 +698,7 @@ plot_heatmap_rd_panel <- function(
   ) +
     ggplot2::geom_tile(colour = NA) +
     heatmap_axis_scales(follow_up_weeks_hm = follow_up_weeks_hm) +
-    heatmap_fill_scale(rd_lim) +
+    heatmap_fill_scale(rd_lim, fill_label, label_fn) +
     ggplot2::labs(
       title = main_title,
       subtitle = subtitle,
@@ -673,8 +808,9 @@ plot_heatmap_missing_panel <- function(
     )
 }
 
-build_heatmap_grid <- function() {
-  row_ids <- names(heatmap_rows)
+build_heatmap_grid <- function(metric_cfg) {
+  pollutants <- metric_cfg$pollutants
+  row_ids <- metric_cfg$heatmap_row_ids
   plots <- vector("list", length(row_ids) * length(pollutants))
   idx <- 1L
 
@@ -687,16 +823,10 @@ build_heatmap_grid <- function() {
     for (col_i in seq_along(pollutants)) {
       pollutant <- pollutants[[col_i]]
       stub <- row_cfg[[pollutant]]
-      main_title <- if (row_i == 1L) panel_titles[[pollutant]] else NULL
+      main_title <- heatmap_panel_title(pollutant, row_i)
       subtitle <- heatmap_subtitle(pollutant, row_id)
-      is_o3_blank <- pollutant == "o3" && row_id %in% c("lt20", "lt5")
 
-      if (is_o3_blank) {
-        p <- plot_heatmap_no_intervention_blank_panel(
-          main_title = main_title,
-          subtitle = subtitle
-        )
-      } else if (is.na(stub) || !nzchar(stub)) {
+      if (is.na(stub) || !nzchar(stub)) {
         p <- plot_heatmap_no_intervention_panel(
           main_title = main_title,
           subtitle = subtitle,
@@ -713,12 +843,15 @@ build_heatmap_grid <- function() {
             show_x_text = show_x_text
           )
         } else {
-          rd_lim <- panel_rd_lim(hm, pollutant)
+          hm <- scale_heatmap_df(hm, metric_cfg$risk_scale)
+          rd_lim <- panel_rd_lim(hm, pollutant, metric_cfg)
           p <- plot_heatmap_rd_panel(
             data = hm,
             main_title = main_title,
             subtitle = subtitle,
             rd_lim = rd_lim,
+            fill_label = metric_cfg$heatmap_fill_label,
+            label_fn = metric_cfg$label_fn,
             show_x_title = show_x_title,
             show_x_text = TRUE
           )
@@ -730,39 +863,109 @@ build_heatmap_grid <- function() {
     }
   }
 
-  do.call(
-    ggpubr::ggarrange,
-    c(
-      plots,
-      list(ncol = length(pollutants), nrow = length(row_ids), common.legend = FALSE)
-    )
+  fig_width <- if (length(pollutants) == 2L) fig_width_2col else fig_width_3col
+  panel_widths <- rep(1, length(pollutants))
+  fig_height_hm <- heatmap_row_height * length(row_ids)
+
+  list(
+    plot = do.call(
+      ggpubr::ggarrange,
+      c(
+        plots,
+        list(
+          ncol = length(pollutants),
+          nrow = length(row_ids),
+          widths = panel_widths,
+          align = "hv",
+          common.legend = FALSE
+        )
+      )
+    ),
+    width = fig_width,
+    height = fig_height_hm
   )
 }
 
-p_heatmap_panel <- build_heatmap_grid()
+build_heatmap_rd_summary <- function() {
+  heatmap_stubs <- unique(unlist(heatmap_rows, use.names = FALSE))
+  heatmap_stubs <- heatmap_stubs[!is.na(heatmap_stubs) & nzchar(heatmap_stubs)]
 
-path_heatmap <- file.path(dir_figures, "Figure_heatmap_rd_interventions.png")
+  dplyr::bind_rows(lapply(heatmap_stubs, function(stub) {
+    hm <- load_heatmap_stub(stub)
+    if (is.null(hm)) {
+      return(NULL)
+    }
+    hm |>
+      dplyr::summarise(
+        scenario = stub,
+        min_risk_difference = min(.data$risk_difference, na.rm = TRUE),
+        max_risk_difference = max(.data$risk_difference, na.rm = TRUE),
+        min_risk_difference_pp = min(.data$risk_difference, na.rm = TRUE) * 100,
+        max_risk_difference_pp = max(.data$risk_difference, na.rm = TRUE) * 100,
+        .groups = "drop"
+      )
+  }))
+}
 
-ggplot2::ggsave(
-  path_heatmap,
-  p_heatmap_panel,
-  width = fig_width,
-  height = heatmap_fig_height,
-  units = "cm",
-  dpi = fig_dpi,
-  bg = "white"
-)
-message("Panel de mapa de calor RD guardado: ", path_heatmap)
-message(
-  "  Filas: pct10, pct20, pct30, lt20, lt5 | Columnas: PM2.5, NO2, O3 (O3 vacío en lt20/lt5)"
-)
-message(
-  "  Escalas RD por contaminante: PM2.5 [-0.00025, 0.00025], ",
-  "NO2 [-0.00020, 0.00020], O3 [-0.00045, 0.00045]"
-)
+save_metric_figures <- function(metric_cfg) {
+  suffix <- metric_cfg$suffix
 
-## ===== Eliminar figuras antiguas reemplazadas =====
+  cumulative <- build_cumulative_risk_figure(metric_cfg)
+  path_cumulative <- file.path(
+    dir_figures,
+    paste0("Figure_cumulative_risk_interventions_", suffix, ".png")
+  )
+  ggplot2::ggsave(
+    path_cumulative,
+    cumulative$plot,
+    width = cumulative$width,
+    height = fig_height,
+    units = "cm",
+    dpi = fig_dpi,
+    bg = "white"
+  )
+  message(
+    "Panel de riesgo acumulado (", suffix, ") guardado: ", path_cumulative,
+    " | contaminantes: ", paste(metric_cfg$pollutants, collapse = ", ")
+  )
+
+  heatmap <- build_heatmap_grid(metric_cfg)
+  path_heatmap <- file.path(
+    dir_figures,
+    paste0("Figure_heatmap_rd_interventions_", suffix, ".png")
+  )
+  ggplot2::ggsave(
+    path_heatmap,
+    heatmap$plot,
+    width = heatmap$width,
+    height = heatmap$height,
+    units = "cm",
+    dpi = fig_dpi,
+    bg = "white"
+  )
+  message(
+    "Panel de mapa de calor (", suffix, ") guardado: ", path_heatmap,
+    " | contaminantes: ", paste(metric_cfg$pollutants, collapse = ", "),
+    " | filas: ", paste(metric_cfg$heatmap_row_ids, collapse = ", ")
+  )
+}
+
+## ===== Ejecución =====
+dir.create(dir_figures, recursive = TRUE, showWarnings = FALSE)
+
+path_heatmap_summary <- file.path(dir_summary, "heatmap_rd_min_max_by_scenario.xlsx")
+heatmap_rd_summary <- build_heatmap_rd_summary()
+writexl::write_xlsx(heatmap_rd_summary, path = path_heatmap_summary)
+message("Tabla min/max RD guardada: ", path_heatmap_summary)
+print(heatmap_rd_summary)
+
+for (metric_cfg in metric_configs) {
+  save_metric_figures(metric_cfg)
+}
+
 old_figures <- c(
+  file.path(dir_figures, "Figure_cumulative_risk_interventions.png"),
+  file.path(dir_figures, "Figure_heatmap_rd_interventions.png"),
   file.path(dir_figures, "Figure3_pm25_pct20_cumulative_risk.png"),
   file.path(dir_figures, "Figure4_pm25_pct20_heatmap_rd.png")
 )
@@ -774,3 +977,5 @@ for (old_path in old_figures) {
 }
 
 message("\nListo. Figuras en: ", dir_figures)
+message("  absolute: PM2.5 + NO2 | escenarios lt5/10/15/20 | escala proporción")
+message("  percent:  PM2.5 + NO2 + O3 | escenarios pct10/20/30 | escala %")

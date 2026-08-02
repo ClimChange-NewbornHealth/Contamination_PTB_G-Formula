@@ -57,10 +57,10 @@ We conducted a population-based retrospective cohort study using:
   - Late preterm (34–36 weeks)
 - **Distributed-lag models (DLM)**: Week-specific Cox proportional hazards models with time-weighted lagged exposure and delayed entry at week 28
 - **G-computation**: Parametric g-formula applied to natural-course Cox models (weeks 28–36) under counterfactual exposure histories
-- **Intervention scenarios**:
-  - **Threshold (cap)**: PM₂.₅ capped at 5, 10, 15, 20 µg/m³; NO₂ capped at 5, 10, 15, 20 ppbv
-  - **Proportional reduction**: 20% reduction applied to PM₂.₅, NO₂, or O₃ across all gestational weeks
-  - **Single-week interventions**: 20% reduction in one gestational week at a time (critical-window map)
+- **Intervention scenarios** (17 global scenarios; kriging exposures; see table below):
+  - **Threshold (cap)**: weekly exposure set to \(\min(X, c)\) when observed values exceed the cap — PM₂.₅ at 5, 10, 15, 20 µg/m³; NO₂ at 5, 10, 15, 20 ppbv
+  - **Proportional reduction**: uniform 10%, 20%, or 30% reduction in weekly PM₂.₅, NO₂, or O₃ across all gestational weeks (each pollutant modeled separately)
+  - **Single-week interventions**: same intervention type as the parent scenario (cap or % reduction) applied in one gestational week at a time (critical-window heatmaps)
 - **Covariates**: Newborn sex; maternal and paternal age, education, and occupation; month and year of last menstrual period; COVID-19 period; SOVI; weekly temperature; NDVI
 - **Inference**: Parametric bootstrap (250 replicates in manuscript; configurable in code via `GFORM_BOOT_ITER`)
 
@@ -110,6 +110,33 @@ We conducted a population-based retrospective cohort study using:
 - `00_Code/10.2 G-Form_models.R` — Run interventions, bootstrap, and heatmaps (Stage 2)
 - `00_Code/10.3 G-Form_plots.R` — Publication figures (cumulative risk, heatmaps)
 - `00_Code/10.4 G-Form_table.R` — Summary tables (Table 3)
+- `00_Code/intervention.txt` — Scenario list reference
+
+### G-Computation Intervention Registry
+
+All scenarios are defined in `GFORM_INTERVENTION_REGISTRY` (`00_Code/10.1 G-Form_functions.R`). Stage 1 (`10.0`) writes one RDS per scenario to `02_Output/G-Form/Interventions/`; Stage 2 (`10.2`) runs models and bootstrap by `intervention_number` (1–17) or via `GFORM_INTERVENTIONS`.
+
+| # | Pollutant | Scenario | Registry ID | Output stub |
+|---|-----------|----------|-------------|-------------|
+| 1 | PM₂.₅ | −20% all weeks | `pm25_krg_pct20` | `pm25_pct20` |
+| 2 | NO₂ | −20% all weeks | `no2_krg_pct20` | `no2_pct20` |
+| 3 | O₃ | −20% all weeks | `o3_krg_pct20` | `o3_pct20` |
+| 4 | PM₂.₅ | < 20 µg/m³ | `pm25_krg_lt20` | `pm25_lt20` |
+| 5 | PM₂.₅ | < 5 µg/m³ | `pm25_krg_lt5` | `pm25_lt5` |
+| 6 | NO₂ | < 20 ppbv | `no2_krg_lt20` | `no2_lt20` |
+| 7 | NO₂ | < 5 ppbv | `no2_krg_lt5` | `no2_lt5` |
+| 8 | PM₂.₅ | < 15 µg/m³ | `pm25_krg_lt15` | `pm25_lt15` |
+| 9 | PM₂.₅ | < 10 µg/m³ | `pm25_krg_lt10` | `pm25_lt10` |
+| 10 | NO₂ | < 15 ppbv | `no2_krg_lt15` | `no2_lt15` |
+| 11 | NO₂ | < 10 ppbv | `no2_krg_lt10` | `no2_lt10` |
+| 12 | PM₂.₅ | −10% all weeks | `pm25_krg_pct10` | `pm25_pct10` |
+| 13 | PM₂.₅ | −30% all weeks | `pm25_krg_pct30` | `pm25_pct30` |
+| 14 | NO₂ | −10% all weeks | `no2_krg_pct10` | `no2_pct10` |
+| 15 | NO₂ | −30% all weeks | `no2_krg_pct30` | `no2_pct30` |
+| 16 | O₃ | −10% all weeks | `o3_krg_pct10` | `o3_pct10` |
+| 17 | O₃ | −30% all weeks | `o3_krg_pct30` | `o3_pct30` |
+
+*Cap semantics*: `< 5` means exposure is fixed at 5 units when the observed weekly value exceeds 5 (`min(X, c)`), not a subtraction of 5 from observed concentrations.
 
 ---
 
@@ -139,17 +166,17 @@ Starting from 2,557,140 singleton births in Chile (2010–2020), sequential excl
 
 *Note*: Week-specific hazard ratios (HR) and 95% CIs from distributed-lag Cox models. Each point represents the acute effect of weekly exposure at gestational week *t*, conditional on time-weighted lagged exposure through week *t*−1. Models adjusted for sex, parental characteristics, calendar time, SOVI, temperature, and NDVI. Kriging-based exposures; N = 713,918.
 
-### Figure 4. Cumulative Preterm Birth Risk Under 20% Pollution Reduction Scenarios
+### Figure 4. Cumulative Preterm Birth Risk Under Pollution Reduction Scenarios
 
 ![](/02_Output/G-Form/Figures/Figure_cumulative_risk_interventions.png)
 
-*Note*: Cumulative risk of preterm birth (weeks 28–36) under the natural course (observed exposure) vs. a uniform 20% reduction in weekly PM₂.₅, NO₂, or O₃. Estimates from parametric g-computation with distributed-lag Cox models.
+*Note*: Cumulative risk of preterm birth (weeks 28–36) under the natural course vs. global intervention scenarios: cap thresholds (< 20, < 5) and proportional reductions (−10%, −20%, −30%) for PM₂.₅, NO₂, and O₃ (O₃: proportional reductions only). Estimates from parametric g-computation with distributed-lag Cox models.
 
-### Figure 5. Critical-Window Heatmap of Risk Differences (Single-Week 20% Reduction)
+### Figure 5. Critical-Window Heatmap of Risk Differences (Single-Week Interventions)
 
 ![](/02_Output/G-Form/Figures/Figure_heatmap_rd_interventions.png)
 
-*Note*: Risk difference (RD) in cumulative preterm birth risk for a 20% reduction applied in a single gestational week (columns) and evaluated through follow-up weeks 28–36 (rows). Marginal single-week interventions; not directly comparable to simultaneous full-history interventions.
+*Note*: Risk difference (RD) in cumulative preterm birth risk when the intervention is applied in a single gestational week (columns) and evaluated through follow-up weeks 28–36 (rows). Panels include −10%, −20%, and −30% reductions and cap scenarios (< 20, < 5) where available. Marginal single-week interventions; not directly comparable to simultaneous full-history interventions.
 
 ---
 
@@ -193,9 +220,13 @@ Main analytical datasets are stored in `01_Data/Output/`:
 
 G-computation outputs are stored in `02_Output/G-Form/`:
 
-- `Summary_results/` — Point estimates and bootstrap CIs by scenario
-- `Interventions/` — Counterfactual exposure histories (RDS)
+- `Summary_results/` — Point estimates and bootstrap CIs by scenario (`{stub}_point_estimates.xlsx`; summary table via `10.4`)
+- `Interventions/` — Counterfactual exposure histories (RDS; one file per registry ID)
 - `WeeklyEffects/`, `PopulationEffects/` — Detailed effect objects
+- `Bootstrap/{stub}/` — Bootstrap replicates per scenario
+- `Heatmap/{stub}/` — Single-week intervention heatmaps
+
+Output stubs follow pollutant and scenario: e.g. `pm25_pct10`, `pm25_pct20`, `pm25_pct30`, `pm25_lt20`, `no2_pct30`, `o3_pct10`.
 
 **Note**: Individual-level birth records cannot be publicly shared due to Chilean data protection regulations. Aggregated results and analysis code are available in this repository.
 
@@ -255,7 +286,7 @@ Automatically installed via `00_Code/0.2 Packages.R` and `00_Code/0.2 Packages_g
 
 5. **G-computation** (two stages):
    ```r
-   # Stage 1: build intervention objects (run once)
+   # Stage 1: build all 17 intervention RDS (run once; set overwrite_interventions = TRUE after registry changes)
    source("00_Code/10.0 G-Form_build_interventions.R")
 
    # Stage 2: run models, bootstrap, and heatmaps
@@ -267,6 +298,11 @@ Automatically installed via `00_Code/0.2 Packages.R` and `00_Code/0.2 Packages_g
    For server/parallel execution:
    ```bash
    GFORM_EXEC_MODE=server Rscript "00_Code/10.2 G-Form_models.R"
+   ```
+
+   Run a subset of interventions (by number 1–17):
+   ```bash
+   GFORM_INTERVENTIONS=12,13,16 Rscript "00_Code/10.2 G-Form_models.R"
    ```
 
 ### Notes on Computation Time
@@ -340,19 +376,23 @@ Births were excluded if:
 
 ### G-Computation Interventions
 
-**Threshold (cap)**:
+**Threshold (cap)** — exposure fixed at the cap when observed values exceed it:
 
 \[
 X'_{iw} = \min(X_{iw}, c)
 \]
 
-**Proportional reduction (20%)**:
+with \(c \in \{5, 10, 15, 20\}\) µg/m³ (PM₂.₅) or ppbv (NO₂).
+
+**Proportional reduction** — uniform scaling across all gestational weeks:
 
 \[
-X'_{iw} = X_{iw} \times (1 - 0.20)
+X'_{iw} = X_{iw} \times (1 - \pi), \quad \pi \in \{0.10, 0.20, 0.30\}
 \]
 
-**Single-week reduction**: Apply 20% reduction only in week \(j\); all other weeks remain at observed values.
+applied separately to PM₂.₅, NO₂, and O₃.
+
+**Single-week reduction**: Apply the same cap or proportional rule only in week \(j\); all other weeks remain at observed values. Used for critical-window heatmaps (Figure 5).
 
 Population metrics at week 36: prevalence, expected cases, risk ratio (RR), risk difference (RD), attributable risk (AR), and population attributable fraction (PAF).
 

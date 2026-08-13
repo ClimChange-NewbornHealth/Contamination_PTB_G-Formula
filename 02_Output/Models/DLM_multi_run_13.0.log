@@ -221,3 +221,5 @@ The following objects are masked from ‘package:purrr’:
     flatten, flatten_chr, flatten_dbl, flatten_int, flatten_lgl,
     flatten_raw, invoke, splice
 
+Warning message:
+Missing `trust` will be set to FALSE by default for RData in 2.0.0. 

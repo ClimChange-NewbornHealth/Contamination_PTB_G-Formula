@@ -55,6 +55,7 @@ GFORM_MULTI_ACTIVE <- new.env(parent = emptyenv())
 
 .gform_build_cox_model_frame <- build_cox_model_frame
 .gform_fit_cox_one_week <- fit_cox_one_week
+.gform_fit_natural_course_models <- fit_natural_course_models
 .gform_model_cache_path <- gform_model_cache_path
 .gform_natural_course_cache_key <- gform_natural_course_cache_key
 
@@ -164,46 +165,49 @@ gform_multi_clear_active <- function() {
   invisible(NULL)
 }
 
-## Overrides Cox multicontaminante ----
+## Frame Cox slim (solo semanas de riesgo con modelo Cox) ----
 
-build_cox_model_frame <- function(
-    data_base,
-    wide_exposicion,
-    wide_tad_obs,
-    control_vars,
-    dependent_var,
-    risk_entry_week) {
-
-  out <- .gform_build_cox_model_frame(
-    data_base = data_base,
-    wide_exposicion = wide_exposicion,
-    wide_tad_obs = wide_tad_obs,
-    control_vars = control_vars,
-    dependent_var = dependent_var,
-    risk_entry_week = risk_entry_week
-  )
-
-  wide_copoll <- GFORM_MULTI_ACTIVE$wide_copollutants
-  if (!is.null(wide_copoll)) {
-    if (!data.table::is.data.table(wide_copoll)) {
-      wide_copoll <- data.table::as.data.table(wide_copoll)
-    }
-    data.table::setkey(wide_copoll, id)
-    data.table::setkey(out, id)
-    out <- wide_copoll[out, on = "id"]
-  }
-  out
+gform_multi_cox_frame_weeks <- function(
+    risk_weeks_vec = GFORM_DEFAULTS$risk_weeks,
+    risk_entry_week = GFORM_DEFAULTS$risk_entry_week) {
+  risk_weeks_vec[risk_weeks_vec >= risk_entry_week]
 }
 
-fit_cox_one_week <- function(
+gform_multi_cox_exposure_columns <- function(weeks, lag_weeks = GFORM_DEFAULTS$lag_weeks) {
+  unique(c(
+    paste0("exposicion_", weeks),
+    paste0("exposicion_lagged_", intersect(weeks, lag_weeks))
+  ))
+}
+
+gform_multi_cox_copoll_columns <- function(primary, weeks) {
+  if (is.null(primary)) return(character(0))
+  unlist(
+    lapply(weeks, gform_multi_copollutant_terms_week, primary = primary),
+    use.names = FALSE
+  )
+}
+
+gform_multi_cox_tad_columns <- function(weeks) {
+  paste0("tad_", weeks)
+}
+
+gform_multi_slim_wide_table <- function(dt, keep_cols, id_col = "id") {
+  if (!data.table::is.data.table(dt)) {
+    dt <- data.table::as.data.table(dt)
+  }
+  keep <- unique(c(id_col, intersect(keep_cols, names(dt))))
+  dt[, ..keep]
+}
+
+gform_multi_cox_vars_for_week <- function(
     rw,
-    data_model_df,
     control_vars,
     lag_weeks,
     dependent_var,
     risk_entry_week) {
 
-  if (rw < risk_entry_week) return(NULL)
+  if (rw < risk_entry_week) return(character(0))
 
   exp_var <- paste0("exposicion_", rw)
   lag_var <- paste0("exposicion_lagged_", rw)
@@ -221,13 +225,85 @@ fit_cox_one_week <- function(
     tad_var
   )
 
+  c("id", "weeks", "tstart", dependent_var, pred_terms, control_vars)
+}
+
+## Overrides Cox multicontaminante ----
+
+build_cox_model_frame <- function(
+    data_base,
+    wide_exposicion,
+    wide_tad_obs,
+    control_vars,
+    dependent_var,
+    risk_entry_week) {
+
+  weeks_needed <- gform_multi_cox_frame_weeks(
+    risk_weeks_vec = GFORM_DEFAULTS$risk_weeks,
+    risk_entry_week = risk_entry_week
+  )
+  lag_weeks <- GFORM_DEFAULTS$lag_weeks
+
+  wide_exposicion <- gform_multi_slim_wide_table(
+    wide_exposicion,
+    keep_cols = gform_multi_cox_exposure_columns(weeks_needed, lag_weeks)
+  )
+  wide_tad_obs <- gform_multi_slim_wide_table(
+    wide_tad_obs,
+    keep_cols = gform_multi_cox_tad_columns(weeks_needed)
+  )
+
+  wide_copoll <- GFORM_MULTI_ACTIVE$wide_copollutants
+  if (!is.null(wide_copoll)) {
+    primary <- GFORM_MULTI_ACTIVE$primary_pollutant
+    wide_copoll <- gform_multi_slim_wide_table(
+      wide_copoll,
+      keep_cols = gform_multi_cox_copoll_columns(primary, weeks_needed)
+    )
+    data.table::setkey(wide_copoll, id)
+  }
+
+  out <- .gform_build_cox_model_frame(
+    data_base = data_base,
+    wide_exposicion = wide_exposicion,
+    wide_tad_obs = wide_tad_obs,
+    control_vars = control_vars,
+    dependent_var = dependent_var,
+    risk_entry_week = risk_entry_week
+  )
+
+  if (!is.null(wide_copoll)) {
+    data.table::setkey(out, id)
+    out <- wide_copoll[out, on = "id"]
+  }
+  out
+}
+
+fit_cox_one_week <- function(
+    rw,
+    data_model_df,
+    control_vars,
+    lag_weeks,
+    dependent_var,
+    risk_entry_week) {
+
+  vars_needed <- gform_multi_cox_vars_for_week(
+    rw, control_vars, lag_weeks, dependent_var, risk_entry_week
+  )
+  if (!length(vars_needed)) return(NULL)
+
+  pred_terms <- setdiff(vars_needed, c("id", "weeks", "tstart", dependent_var, control_vars))
+
   rhs <- paste(c(pred_terms, control_vars), collapse = " + ")
   fml <- stats::as.formula(paste0(
     "Surv(tstart, weeks, ", dependent_var, ") ~ ", rhs
   ))
 
-  vars_needed <- c("id", "weeks", "tstart", dependent_var, pred_terms, control_vars)
-  model_df <- data_model_df[, vars_needed, drop = FALSE]
+  if (data.table::is.data.table(data_model_df)) {
+    model_df <- as.data.frame(data_model_df[, ..vars_needed])
+  } else {
+    model_df <- data_model_df[, vars_needed, drop = FALSE]
+  }
   model_df <- stats::na.omit(model_df)
 
   if (nrow(model_df) < 50L) {
@@ -255,6 +331,71 @@ fit_cox_one_week <- function(
   ))
 }
 
+fit_natural_course_models <- function(
+    data_base,
+    wide_exposicion_natural,
+    wide_tad_obs,
+    risk_weeks_vec,
+    control_vars = GFORM_DEFAULTS$control_vars,
+    lag_weeks = GFORM_DEFAULTS$lag_weeks,
+    dependent_var = GFORM_DEFAULTS$dependent_var,
+    risk_entry_week = GFORM_DEFAULTS$risk_entry_week,
+    parallel = TRUE) {
+
+  cox_frame_natural <- build_cox_model_frame(
+    data_base = data_base,
+    wide_exposicion = wide_exposicion_natural,
+    wide_tad_obs = wide_tad_obs,
+    control_vars = control_vars,
+    dependent_var = dependent_var,
+    risk_entry_week = risk_entry_week
+  )
+  if (!data.table::is.data.table(cox_frame_natural)) {
+    cox_frame_natural <- data.table::as.data.table(cox_frame_natural)
+  }
+  data.table::setkey(cox_frame_natural, id)
+
+  weeks_to_fit <- risk_weeks_vec[risk_weeks_vec >= risk_entry_week]
+
+  fit_one <- function(rw) {
+    vars_needed <- gform_multi_cox_vars_for_week(
+      rw, control_vars, lag_weeks, dependent_var, risk_entry_week
+    )
+    week_df <- cox_frame_natural[, ..vars_needed]
+    fit_cox_one_week(
+      rw,
+      week_df,
+      control_vars,
+      lag_weeks,
+      dependent_var,
+      risk_entry_week
+    )
+  }
+
+  if (parallel && length(weeks_to_fit) > 1L && requireNamespace("furrr", quietly = TRUE)) {
+    gform_setup_parallel(task = "cox")
+    fitted <- furrr::future_map(
+      weeks_to_fit,
+      fit_one,
+      .options = gform_furrr_options()
+    )
+  } else {
+    fitted <- lapply(weeks_to_fit, fit_one)
+  }
+
+  model_store <- vector("list", length(risk_weeks_vec))
+  names(model_store) <- as.character(risk_weeks_vec)
+  for (i in seq_along(weeks_to_fit)) {
+    model_store[[as.character(weeks_to_fit[i])]] <- fitted[[i]]
+  }
+  model_store <- slim_model_store(model_store)
+
+  list(
+    model_store = model_store,
+    cox_frame_natural = cox_frame_natural
+  )
+}
+
 gform_model_cache_path <- function(pollutant, dir_models) {
   file.path(dir_models, paste0("natural_course_", pollutant, "_multi.rds"))
 }
@@ -270,7 +411,7 @@ gform_natural_course_cache_key <- function(
     sample_frac = NULL) {
 
   c(
-    list(model_type = "multicontaminant_dlm"),
+    list(model_type = "multicontaminant_dlm", cox_frame_slim = TRUE),
     .gform_natural_course_cache_key(
       data_base = data_base,
       pollutant = pollutant,

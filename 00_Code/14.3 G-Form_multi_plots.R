@@ -1,0 +1,915 @@
+# 14.3 G-Formula multicontaminante — figuras (pct20 × 3 contaminantes) ----
+#
+# Uso (desde la raíz del proyecto, Mac / local):
+#   Rscript "00_Code/14.3 G-Form_multi_plots.R"
+#
+# Entrada: 02_Output/G-Form-Multi/Summary_results/{pm25,no2,o3}_pct20_point_estimates.xlsx
+# Salida:
+#   02_Output/G-Form-Multi/Figures/Figure_cumulative_risk_interventions_percent.png
+#   02_Output/G-Form-Multi/Figures/Figure_heatmap_rd_interventions_percent.png
+#   02_Output/G-Form-Multi/Summary_results/heatmap_rd_min_max_by_scenario.xlsx
+
+source("00_Code/0.1 Settings.R")
+
+install_load <- function(packages) {
+  for (pkg in packages) {
+    if (!requireNamespace(pkg, quietly = TRUE)) {
+      install.packages(pkg, repos = "https://cloud.r-project.org")
+    }
+    suppressPackageStartupMessages(
+      library(pkg, character.only = TRUE)
+    )
+  }
+}
+
+install_load(c("readxl", "dplyr", "tidyr", "ggplot2", "scales", "ggpubr", "grid", "writexl"))
+
+## ===== Configuración =====
+data_out_g <- "02_Output/G-Form-Multi/"
+dir_figures <- file.path(data_out_g, "Figures")
+dir_summary <- file.path(data_out_g, "Summary_results")
+dir_heatmap <- file.path(data_out_g, "Heatmap")
+
+all_pollutants <- c("pm25", "no2", "o3")
+
+panel_titles <- list(
+  pm25 = expression("A. PM"[2.5]),
+  no2 = expression("B. NO"[2]),
+  o3 = expression("C. O"[3])
+)
+
+cap_labels <- list(
+  pm25 = list(
+    lt20 = "< 20 \u00b5g/m\u00b3",
+    lt15 = "< 15 \u00b5g/m\u00b3",
+    lt10 = "< 10 \u00b5g/m\u00b3",
+    lt5 = "< 5 \u00b5g/m\u00b3"
+  ),
+  no2 = list(
+    lt20 = "< 20 ppbv",
+    lt15 = "< 15 ppbv",
+    lt10 = "< 10 ppbv",
+    lt5 = "< 5 ppbv"
+  )
+)
+
+pollutant_scenarios <- list(
+  pm25 = list(
+    list(stub = "pm25_pct20", series = "pct20")
+  ),
+  no2 = list(
+    list(stub = "no2_pct20", series = "pct20")
+  ),
+  o3 = list(
+    list(stub = "o3_pct20", series = "pct20")
+  )
+)
+
+heatmap_rows <- list(
+  pct20 = list(
+    pm25 = "pm25_pct20",
+    no2 = "no2_pct20",
+    o3 = "o3_pct20"
+  )
+)
+
+metric_configs <- list(
+  percent = list(
+    suffix = "percent",
+    pollutants = c("pm25", "no2", "o3"),
+    scenario_series = c("pct20"),
+    heatmap_row_ids = c("pct20"),
+    legend_levels = c(
+      "Natural Course",
+      "Reduced by 20%"
+    ),
+    legend_nrow = 1L,
+    series_colours = c(
+      "Natural Course" = "#8C8C8C",
+      "Reduced by 20%" = "#F4A861"
+    ),
+    series_linetypes = c(
+      "Natural Course" = "solid",
+      "Reduced by 20%" = "44"
+    ),
+    series_linewidths = c(
+      "Natural Course" = 0.65,
+      "Reduced by 20%" = 0.45
+    ),
+    risk_scale = 100,
+    cumulative_y_label = "Risk of Birth (%)",
+    heatmap_fill_label = "Risk Difference (pp)",
+    label_fn = scales::label_number(accuracy = 0.01),
+    heatmap_rd_limits = c(
+      pm25 = 0.025,
+      no2 = 0.020,
+      o3 = 0.045
+    )
+  )
+)
+
+follow_up_weeks <- 28:36
+intervention_week_range <- c(0L, 44L)
+fig_dpi <- 300
+axis_title_size <- 9
+fig_width_3col <- 30
+fig_width_2col <- 30
+fig_height <- 12
+heatmap_row_height <- 11.4
+heatmap_legend_barwidth <- 2.6
+heatmap_legend_barheight <- 0.35
+
+legend_series_levels <- c(
+  "Natural Course",
+  "< 5",
+  "< 10",
+  "< 15",
+  "< 20",
+  "Reduced by 10%",
+  "Reduced by 20%",
+  "Reduced by 30%"
+)
+
+series_colours <- c(
+  "Natural Course" = "#8C8C8C",
+  "< 5" = "#377EB8",
+  "< 10" = "#4DAF4A",
+  "< 15" = "#FF7F00",
+  "< 20" = "#E41A1C",
+  "Reduced by 10%" = "#984EA3",
+  "Reduced by 20%" = "#A65628",
+  "Reduced by 30%" = "#F781BF"
+)
+series_linetypes <- c(
+  "Natural Course" = "solid",
+  "< 5" = "44",
+  "< 10" = "6666",
+  "< 15" = "1313",
+  "< 20" = "22",
+  "Reduced by 10%" = "1199",
+  "Reduced by 20%" = "1F1F",
+  "Reduced by 30%" = "F1F1"
+)
+series_linewidths <- c(
+  "Natural Course" = 0.65,
+  "< 5" = 0.45,
+  "< 10" = 0.45,
+  "< 15" = 0.45,
+  "< 20" = 0.45,
+  "Reduced by 10%" = 0.45,
+  "Reduced by 20%" = 0.45,
+  "Reduced by 30%" = 0.45
+)
+
+series_key_to_label <- c(
+  lt5 = "< 5",
+  lt10 = "< 10",
+  lt15 = "< 15",
+  lt20 = "< 20",
+  pct10 = "Reduced by 10%",
+  pct20 = "Reduced by 20%",
+  pct30 = "Reduced by 30%"
+)
+
+pct_row_labels <- c(
+  pct10 = "Reduced by 10%",
+  pct20 = "Reduced by 20%",
+  pct30 = "Reduced by 30%"
+)
+
+gform_panel_theme <- function() {
+  ggplot2::theme_light(base_size = 12) +
+    ggplot2::theme(
+      panel.grid = ggplot2::element_blank(),
+      plot.title = ggplot2::element_text(size = 11, hjust = 0),
+      plot.subtitle = ggplot2::element_text(size = 9, hjust = 0, colour = "grey30"),
+      axis.title.x = ggplot2::element_text(size = axis_title_size),
+      axis.title.y = ggplot2::element_text(size = axis_title_size)
+    )
+}
+
+gform_excel_sheet <- function(path, pattern) {
+  sheets <- readxl::excel_sheets(path)
+  hit <- sheets[grepl(pattern, sheets, ignore.case = TRUE)]
+  if (!length(hit)) {
+    return(NA_character_)
+  }
+  hit[[1L]]
+}
+
+scenario_excel_path <- function(stub) {
+  file.path(dir_summary, paste0(stub, "_point_estimates.xlsx"))
+}
+
+load_curves_stub <- function(stub) {
+  excel_path <- scenario_excel_path(stub)
+  if (!file.exists(excel_path)) {
+    return(NULL)
+  }
+
+  sheet_curves <- gform_excel_sheet(excel_path, "^curvas_riesgo_acumulado")
+  if (is.na(sheet_curves)) {
+    warning("Sin hoja de curvas en ", excel_path)
+    return(NULL)
+  }
+
+  curves <- readxl::read_excel(excel_path, sheet = sheet_curves) |>
+    dplyr::filter(.data$follow_up_week %in% follow_up_weeks)
+
+  if (!nrow(curves)) {
+    warning("Curvas vacías en ", excel_path)
+    return(NULL)
+  }
+
+  curves
+}
+
+load_heatmap_stub <- function(stub) {
+  if (is.na(stub) || !nzchar(stub)) {
+    return(NULL)
+  }
+
+  excel_path <- scenario_excel_path(stub)
+  if (file.exists(excel_path)) {
+    sheet_heatmap <- gform_excel_sheet(excel_path, "^mapa_calor_rd_semana_interve$")
+    if (!is.na(sheet_heatmap)) {
+      heatmap_long <- readxl::read_excel(excel_path, sheet = sheet_heatmap)
+      if (nrow(heatmap_long) && "risk_difference" %in% names(heatmap_long)) {
+        return(
+          heatmap_long |>
+            dplyr::filter(is.finite(.data$risk_difference))
+        )
+      }
+    }
+  }
+
+  csv_path <- file.path(dir_heatmap, stub, "heatmap_long.csv")
+  if (file.exists(csv_path)) {
+    heatmap_long <- utils::read.csv(csv_path, stringsAsFactors = FALSE)
+    if (nrow(heatmap_long) && "risk_difference" %in% names(heatmap_long)) {
+      return(
+        heatmap_long |>
+          dplyr::filter(is.finite(.data$risk_difference))
+      )
+    }
+  }
+
+  warning("No se encontró heatmap para ", stub)
+  NULL
+}
+
+scale_curves_df <- function(df, risk_scale) {
+  df |>
+    dplyr::mutate(cumulative_risk = .data$cumulative_risk * risk_scale)
+}
+
+scale_heatmap_df <- function(df, risk_scale) {
+  df |>
+    dplyr::mutate(risk_difference = .data$risk_difference * risk_scale)
+}
+
+build_pollutant_curves_long <- function(pollutant, risk_scale, scenario_series, legend_levels) {
+  scenarios <- pollutant_scenarios[[pollutant]]
+  scenarios <- Filter(
+    function(sc) sc$series %in% scenario_series,
+    scenarios
+  )
+  available <- Filter(
+    function(sc) file.exists(scenario_excel_path(sc$stub)),
+    scenarios
+  )
+  if (!length(available)) {
+    stop("No hay curvas disponibles para ", pollutant)
+  }
+
+  first_curves <- load_curves_stub(available[[1L]]$stub)
+  out <- tibble::tibble(
+    follow_up_week = first_curves$follow_up_week,
+    cumulative_risk = first_curves$cumulative_risk_observed,
+    series = "Natural Course"
+  )
+
+  for (sc in available) {
+    curves <- load_curves_stub(sc$stub)
+    if (is.null(curves)) {
+      next
+    }
+    out <- dplyr::bind_rows(
+      out,
+      tibble::tibble(
+        follow_up_week = curves$follow_up_week,
+        cumulative_risk = curves$cumulative_risk_intervention,
+        series = series_key_to_label[[sc$series]]
+      )
+    )
+  }
+
+  out |>
+    scale_curves_df(risk_scale) |>
+    dplyr::filter(.data$series %in% legend_levels) |>
+    dplyr::mutate(
+      series = factor(.data$series, levels = legend_levels)
+    )
+}
+
+intervention_reduction_rank <- function(label) {
+  switch(
+    label,
+    "< 5" = 4L,
+    "< 10" = 3L,
+    "< 15" = 2L,
+    "< 20" = 1L,
+    "Reduced by 10%" = 1L,
+    "Reduced by 20%" = 2L,
+    "Reduced by 30%" = 3L,
+    0L
+  )
+}
+
+build_intervention_fill_colours <- function(legend_levels) {
+  fill_colours <- c("Natural Course" = "#8C8C8C")
+  interventions <- setdiff(legend_levels, "Natural Course")
+  if (!length(interventions)) {
+    return(fill_colours)
+  }
+
+  sorted_interventions <- interventions[
+    order(vapply(interventions, intervention_reduction_rank, integer(1L)))
+  ]
+  n_interventions <- length(sorted_interventions)
+  gradient_palette <- grDevices::colorRampPalette(c("#FFB347", "#F4A6A6"))(n_interventions)
+  names(gradient_palette) <- sorted_interventions
+
+  c(fill_colours, gradient_palette[interventions])
+}
+
+plot_cumulative_risk_panel <- function(
+    df,
+    panel_title,
+    y_upper,
+    y_breaks,
+    y_label,
+    label_fn,
+    legend_levels,
+    legend_nrow = 1L,
+    series_fill_map = build_intervention_fill_colours(legend_levels)) {
+  n_series <- length(legend_levels)
+  dodge_width <- 0.98
+  bar_width <- 2.0 / n_series
+
+  ggplot2::ggplot(
+    df,
+    ggplot2::aes(
+      x = .data$follow_up_week,
+      y = .data$cumulative_risk,
+      fill = .data$series
+    )
+  ) +
+    ggplot2::geom_col(
+      width = bar_width,
+      colour = "white",
+      linewidth = 0.25,
+      position = ggplot2::position_dodge2(width = dodge_width, padding = 0)
+    ) +
+    ggplot2::scale_x_continuous(
+      breaks = follow_up_weeks,
+      limits = c(
+        min(follow_up_weeks) - dodge_width / 2,
+        max(follow_up_weeks) + dodge_width / 2
+      ),
+      expand = c(0, 0)
+    ) +
+    ggplot2::scale_y_continuous(
+      limits = c(0, y_upper),
+      breaks = y_breaks,
+      labels = label_fn,
+      expand = ggplot2::expansion(mult = c(0, 0.02))
+    ) +
+    ggplot2::scale_fill_manual(
+      values = series_fill_map,
+      breaks = legend_levels,
+      drop = FALSE
+    ) +
+    ggplot2::labs(
+      title = panel_title,
+      x = "Gestational Weeks",
+      y = y_label,
+      fill = NULL
+    ) +
+    gform_panel_theme() +
+    ggplot2::theme(
+      legend.position = "top",
+      legend.title = ggplot2::element_blank(),
+      legend.text = ggplot2::element_text(size = 7),
+      plot.margin = ggplot2::margin(4, 4, 4, 4)
+    ) +
+    ggplot2::guides(
+      fill = ggplot2::guide_legend(
+        order = 1,
+        nrow = legend_nrow,
+        override.aes = list(colour = "white", linewidth = 0.25)
+      )
+    )
+}
+
+build_cumulative_risk_figure <- function(metric_cfg) {
+  pollutants <- metric_cfg$pollutants
+  curves_by_pollutant <- stats::setNames(
+    lapply(
+      pollutants,
+      build_pollutant_curves_long,
+      risk_scale = metric_cfg$risk_scale,
+      scenario_series = metric_cfg$scenario_series,
+      legend_levels = metric_cfg$legend_levels
+    ),
+    pollutants
+  )
+
+  y_vals <- unlist(lapply(curves_by_pollutant, function(df) df$cumulative_risk))
+  y_max <- max(y_vals, na.rm = TRUE)
+  y_upper <- ceiling(y_max * 1e5 * 1.02) / 1e5
+  y_breaks <- scales::pretty_breaks(n = 8)(c(0, y_upper))
+
+  panel_plots <- lapply(seq_along(pollutants), function(i) {
+    pollutant <- pollutants[[i]]
+    title <- switch(
+      pollutant,
+      pm25 = expression("A. PM"[2.5]),
+      no2 = expression("B. NO"[2]),
+      o3 = expression("C. O"[3]),
+      panel_titles[[pollutant]]
+    )
+    plot_cumulative_risk_panel(
+      curves_by_pollutant[[pollutant]],
+      title,
+      y_upper,
+      y_breaks,
+      metric_cfg$cumulative_y_label,
+      metric_cfg$label_fn,
+      metric_cfg$legend_levels,
+      legend_nrow = if (is.null(metric_cfg$legend_nrow)) 1L else metric_cfg$legend_nrow,
+      series_fill_map = build_intervention_fill_colours(metric_cfg$legend_levels)
+    )
+  })
+
+  fig_width <- if (length(pollutants) == 2L) fig_width_2col else fig_width_3col
+  panel_widths <- rep(1, length(pollutants))
+
+  list(
+    plot = do.call(
+      ggpubr::ggarrange,
+      c(
+        panel_plots,
+        list(
+          ncol = length(pollutants),
+          nrow = 1,
+          widths = panel_widths,
+          align = "hv",
+          common.legend = TRUE,
+          legend = "top"
+        )
+      )
+    ),
+    width = fig_width
+  )
+}
+
+panel_rd_lim <- function(hm, pollutant, metric_cfg) {
+  cap <- metric_cfg$heatmap_rd_limits[[pollutant]]
+  if (is.null(hm) || !nrow(hm)) {
+    return(cap)
+  }
+  val <- suppressWarnings(max(abs(hm$risk_difference), na.rm = TRUE))
+  if (!is.finite(val) || val <= 0) {
+    return(cap)
+  }
+  val <- min(cap, ceiling(val * 1e5 * 1.02) / 1e5)
+  max(val, cap / 1000)
+}
+
+heatmap_fill_guide <- function() {
+  ggplot2::guide_colorbar(
+    title.position = "left",
+    title.hjust = 1,
+    title.vjust = 0.92,
+    label.position = "bottom",
+    barwidth = grid::unit(heatmap_legend_barwidth, "cm"),
+    barheight = grid::unit(heatmap_legend_barheight, "cm"),
+    frame.colour = NA,
+    ticks.colour = NA,
+    title.theme = ggplot2::element_text(
+      size = 8,
+      hjust = 1,
+      margin = ggplot2::margin(0, 3, 0, 0)
+    )
+  )
+}
+
+heatmap_axis_scales <- function(
+    intervention_weeks = intervention_week_range,
+    follow_up_weeks_hm = follow_up_weeks) {
+  list(
+    ggplot2::scale_x_continuous(
+      limits = c(intervention_week_range[[1L]] - 0.5, intervention_week_range[[2L]] + 0.5),
+      breaks = seq(intervention_week_range[[1L]], intervention_week_range[[2L]], by = 5),
+      expand = c(0, 0)
+    ),
+    ggplot2::scale_y_reverse(
+      limits = c(max(follow_up_weeks_hm) + 0.5, min(follow_up_weeks_hm) - 0.5),
+      breaks = follow_up_weeks_hm,
+      expand = c(0, 0)
+    )
+  )
+}
+
+heatmap_fill_scale <- function(rd_lim, fill_label, label_fn) {
+  ggplot2::scale_fill_gradient2(
+    name = fill_label,
+    low = "#B2182B",
+    mid = "white",
+    high = "#542788",
+    midpoint = 0,
+    limits = c(-rd_lim, rd_lim),
+    breaks = c(-rd_lim, rd_lim),
+    labels = label_fn(c(-rd_lim, rd_lim)),
+    oob = scales::squish,
+    guide = heatmap_fill_guide()
+  )
+}
+
+heatmap_panel_theme <- function(
+    show_legend,
+    show_x_title = TRUE,
+    show_x_text = FALSE,
+    show_y = TRUE) {
+  gform_panel_theme() +
+    ggplot2::theme(
+      legend.position = if (show_legend) "top" else "none",
+      legend.justification = "center",
+      legend.box = "horizontal",
+      legend.box.just = "center",
+      legend.title = ggplot2::element_text(size = 8, hjust = 1),
+      legend.text = ggplot2::element_text(size = 7, vjust = 0),
+      legend.background = ggplot2::element_blank(),
+      legend.margin = ggplot2::margin(b = 2, t = 0),
+      legend.title.align = 0,
+      plot.margin = ggplot2::margin(4, 4, 4, 4),
+      axis.title.x = if (show_x_title) {
+        ggplot2::element_text(size = axis_title_size)
+      } else {
+        ggplot2::element_blank()
+      },
+      axis.text.x = if (show_x_text) {
+        ggplot2::element_text()
+      } else {
+        ggplot2::element_blank()
+      },
+      axis.title.y = if (show_y) {
+        ggplot2::element_text(size = axis_title_size)
+      } else {
+        ggplot2::element_blank()
+      },
+      axis.text.y = if (show_y) {
+        ggplot2::element_text()
+      } else {
+        ggplot2::element_blank()
+      },
+      axis.ticks = if (show_y || show_x_text) {
+        ggplot2::element_line()
+      } else {
+        ggplot2::element_blank()
+      },
+      axis.line = if (show_y || show_x_text) {
+        ggplot2::element_line()
+      } else {
+        ggplot2::element_blank()
+      }
+    )
+}
+
+heatmap_subtitle <- function(pollutant, row_id) {
+  if (row_id %in% names(pct_row_labels)) {
+    return(unname(pct_row_labels[[row_id]]))
+  }
+  cap_labels[[pollutant]][[row_id]]
+}
+
+heatmap_panel_title <- function(pollutant, row_i) {
+  if (row_i != 1L) {
+    return(NULL)
+  }
+  switch(
+    pollutant,
+    pm25 = expression("A. PM"[2.5]),
+    no2 = expression("B. NO"[2]),
+    o3 = expression("C. O"[3]),
+    panel_titles[[pollutant]]
+  )
+}
+
+plot_heatmap_rd_panel <- function(
+    data,
+    main_title,
+    subtitle,
+    rd_lim,
+    fill_label,
+    label_fn,
+    show_x_title = TRUE,
+    show_x_text = TRUE) {
+
+  if (is.null(data) || !nrow(data)) {
+    stop("plot_heatmap_rd_panel requiere datos con filas.")
+  }
+
+  follow_up_weeks_hm <- sort(unique(data$follow_up_week))
+
+  ggplot2::ggplot(
+    data,
+    ggplot2::aes(
+      x = .data$intervention_week,
+      y = .data$follow_up_week,
+      fill = .data$risk_difference
+    )
+  ) +
+    ggplot2::geom_tile(colour = NA) +
+    heatmap_axis_scales(follow_up_weeks_hm = follow_up_weeks_hm) +
+    heatmap_fill_scale(rd_lim, fill_label, label_fn) +
+    ggplot2::labs(
+      title = main_title,
+      subtitle = subtitle,
+      x = "Gestational Week of Intervention",
+      y = "Follow-up Week"
+    ) +
+    heatmap_panel_theme(
+      show_legend = TRUE,
+      show_x_title = show_x_title,
+      show_x_text = show_x_text
+    )
+}
+
+plot_heatmap_no_intervention_panel <- function(
+    main_title,
+    subtitle,
+    show_x_title = TRUE,
+    show_x_text = FALSE) {
+
+  x_mid <- mean(intervention_week_range)
+  y_mid <- mean(follow_up_weeks)
+
+  ggplot2::ggplot() +
+    heatmap_axis_scales() +
+    ggplot2::annotate(
+      "text",
+      x = x_mid,
+      y = y_mid,
+      label = "No Intervention",
+      size = 4.2,
+      colour = "grey35",
+      fontface = "italic"
+    ) +
+    ggplot2::labs(
+      title = main_title,
+      subtitle = subtitle,
+      x = "Gestational Week of Intervention",
+      y = "Follow-up Week"
+    ) +
+    heatmap_panel_theme(
+      show_legend = FALSE,
+      show_x_title = show_x_title,
+      show_x_text = show_x_text
+    )
+}
+
+plot_heatmap_no_intervention_blank_panel <- function(main_title, subtitle) {
+  ggplot2::ggplot() +
+    ggplot2::annotate(
+      "text",
+      x = 0.5,
+      y = 0.5,
+      label = "No Intervention",
+      size = 4.2,
+      colour = "grey35",
+      fontface = "italic"
+    ) +
+    ggplot2::labs(
+      title = main_title,
+      subtitle = subtitle
+    ) +
+    ggplot2::coord_cartesian(xlim = c(0, 1), ylim = c(0, 1), expand = FALSE, clip = "off") +
+    gform_panel_theme() +
+    ggplot2::theme(
+      legend.position = "none",
+      axis.title = ggplot2::element_blank(),
+      axis.text = ggplot2::element_blank(),
+      axis.ticks = ggplot2::element_blank(),
+      axis.line = ggplot2::element_blank(),
+      panel.grid = ggplot2::element_blank(),
+      panel.border = ggplot2::element_blank(),
+      panel.background = ggplot2::element_rect(fill = "white", colour = NA),
+      plot.background = ggplot2::element_rect(fill = "white", colour = NA),
+      plot.margin = ggplot2::margin(4, 4, 4, 4)
+    )
+}
+
+plot_heatmap_missing_panel <- function(
+    main_title,
+    subtitle,
+    show_x_title = TRUE,
+    show_x_text = FALSE) {
+
+  x_mid <- mean(intervention_week_range)
+  y_mid <- mean(follow_up_weeks)
+
+  ggplot2::ggplot() +
+    heatmap_axis_scales() +
+    ggplot2::annotate(
+      "text",
+      x = x_mid,
+      y = y_mid,
+      label = "Data not available",
+      size = 3.8,
+      colour = "grey50"
+    ) +
+    ggplot2::labs(
+      title = main_title,
+      subtitle = subtitle,
+      x = "Gestational Week of Intervention",
+      y = "Follow-up Week"
+    ) +
+    heatmap_panel_theme(
+      show_legend = FALSE,
+      show_x_title = show_x_title,
+      show_x_text = show_x_text
+    )
+}
+
+build_heatmap_grid <- function(metric_cfg) {
+  pollutants <- metric_cfg$pollutants
+  row_ids <- metric_cfg$heatmap_row_ids
+  plots <- vector("list", length(row_ids) * length(pollutants))
+  idx <- 1L
+
+  for (row_i in seq_along(row_ids)) {
+    row_id <- row_ids[[row_i]]
+    row_cfg <- heatmap_rows[[row_id]]
+    show_x_text <- row_i == length(row_ids)
+    show_x_title <- TRUE
+
+    for (col_i in seq_along(pollutants)) {
+      pollutant <- pollutants[[col_i]]
+      stub <- row_cfg[[pollutant]]
+      main_title <- heatmap_panel_title(pollutant, row_i)
+      subtitle <- heatmap_subtitle(pollutant, row_id)
+
+      if (is.na(stub) || !nzchar(stub)) {
+        p <- plot_heatmap_no_intervention_panel(
+          main_title = main_title,
+          subtitle = subtitle,
+          show_x_title = show_x_title,
+          show_x_text = show_x_text
+        )
+      } else {
+        hm <- load_heatmap_stub(stub)
+        if (is.null(hm)) {
+          p <- plot_heatmap_missing_panel(
+            main_title = main_title,
+            subtitle = subtitle,
+            show_x_title = show_x_title,
+            show_x_text = show_x_text
+          )
+        } else {
+          hm <- scale_heatmap_df(hm, metric_cfg$risk_scale)
+          rd_lim <- panel_rd_lim(hm, pollutant, metric_cfg)
+          p <- plot_heatmap_rd_panel(
+            data = hm,
+            main_title = main_title,
+            subtitle = subtitle,
+            rd_lim = rd_lim,
+            fill_label = metric_cfg$heatmap_fill_label,
+            label_fn = metric_cfg$label_fn,
+            show_x_title = show_x_title,
+            show_x_text = TRUE
+          )
+        }
+      }
+
+      plots[[idx]] <- p
+      idx <- idx + 1L
+    }
+  }
+
+  fig_width <- if (length(pollutants) == 2L) fig_width_2col else fig_width_3col
+  panel_widths <- rep(1, length(pollutants))
+  fig_height_hm <- heatmap_row_height * length(row_ids)
+
+  list(
+    plot = do.call(
+      ggpubr::ggarrange,
+      c(
+        plots,
+        list(
+          ncol = length(pollutants),
+          nrow = length(row_ids),
+          widths = panel_widths,
+          align = "hv",
+          common.legend = FALSE
+        )
+      )
+    ),
+    width = fig_width,
+    height = fig_height_hm
+  )
+}
+
+build_heatmap_rd_summary <- function() {
+  heatmap_stubs <- unique(unlist(heatmap_rows, use.names = FALSE))
+  heatmap_stubs <- heatmap_stubs[!is.na(heatmap_stubs) & nzchar(heatmap_stubs)]
+
+  dplyr::bind_rows(lapply(heatmap_stubs, function(stub) {
+    hm <- load_heatmap_stub(stub)
+    if (is.null(hm)) {
+      return(NULL)
+    }
+    hm |>
+      dplyr::summarise(
+        scenario = stub,
+        min_risk_difference = min(.data$risk_difference, na.rm = TRUE),
+        max_risk_difference = max(.data$risk_difference, na.rm = TRUE),
+        min_risk_difference_pp = min(.data$risk_difference, na.rm = TRUE) * 100,
+        max_risk_difference_pp = max(.data$risk_difference, na.rm = TRUE) * 100,
+        .groups = "drop"
+      )
+  }))
+}
+
+save_metric_figures <- function(metric_cfg) {
+  suffix <- metric_cfg$suffix
+
+  cumulative <- build_cumulative_risk_figure(metric_cfg)
+  path_cumulative <- file.path(
+    dir_figures,
+    paste0("Figure_cumulative_risk_interventions_", suffix, ".png")
+  )
+  ggplot2::ggsave(
+    path_cumulative,
+    cumulative$plot,
+    width = cumulative$width,
+    height = fig_height,
+    units = "cm",
+    dpi = fig_dpi,
+    bg = "white"
+  )
+  message(
+    "Panel de riesgo acumulado (", suffix, ") guardado: ", path_cumulative,
+    " | contaminantes: ", paste(metric_cfg$pollutants, collapse = ", ")
+  )
+
+  heatmap <- build_heatmap_grid(metric_cfg)
+  path_heatmap <- file.path(
+    dir_figures,
+    paste0("Figure_heatmap_rd_interventions_", suffix, ".png")
+  )
+  ggplot2::ggsave(
+    path_heatmap,
+    heatmap$plot,
+    width = heatmap$width,
+    height = heatmap$height,
+    units = "cm",
+    dpi = fig_dpi,
+    bg = "white"
+  )
+  message(
+    "Panel de mapa de calor (", suffix, ") guardado: ", path_heatmap,
+    " | contaminantes: ", paste(metric_cfg$pollutants, collapse = ", "),
+    " | filas: ", paste(metric_cfg$heatmap_row_ids, collapse = ", ")
+  )
+}
+
+## ===== Ejecución =====
+dir.create(dir_figures, recursive = TRUE, showWarnings = FALSE)
+
+path_heatmap_summary <- file.path(dir_summary, "heatmap_rd_min_max_by_scenario.xlsx")
+heatmap_rd_summary <- build_heatmap_rd_summary()
+writexl::write_xlsx(heatmap_rd_summary, path = path_heatmap_summary)
+message("Tabla min/max RD guardada: ", path_heatmap_summary)
+print(heatmap_rd_summary)
+
+for (metric_cfg in metric_configs) {
+  save_metric_figures(metric_cfg)
+}
+
+old_figures <- c(
+  file.path(dir_figures, "Figure_cumulative_risk_interventions.png"),
+  file.path(dir_figures, "Figure_heatmap_rd_interventions.png"),
+  file.path(dir_figures, "Figure3_pm25_pct20_cumulative_risk.png"),
+  file.path(dir_figures, "Figure4_pm25_pct20_heatmap_rd.png")
+)
+for (old_path in old_figures) {
+  if (file.exists(old_path)) {
+    unlink(old_path)
+    message("Figura antigua eliminada: ", old_path)
+  }
+}
+
+message("\nListo. Figuras multicontaminante en: ", dir_figures)
+message("  percent: PM2.5 + NO2 + O3 | escenario pct20 | escala %")

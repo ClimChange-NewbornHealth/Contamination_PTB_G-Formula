@@ -387,6 +387,37 @@ build_pollutant_curves_long <- function(pollutant, risk_scale, scenario_series, 
     )
 }
 
+intervention_reduction_rank <- function(label) {
+  switch(
+    label,
+    "< 5" = 4L,
+    "< 10" = 3L,
+    "< 15" = 2L,
+    "< 20" = 1L,
+    "Reduced by 10%" = 1L,
+    "Reduced by 20%" = 2L,
+    "Reduced by 30%" = 3L,
+    0L
+  )
+}
+
+build_intervention_fill_colours <- function(legend_levels) {
+  fill_colours <- c("Natural Course" = "#8C8C8C")
+  interventions <- setdiff(legend_levels, "Natural Course")
+  if (!length(interventions)) {
+    return(fill_colours)
+  }
+
+  sorted_interventions <- interventions[
+    order(vapply(interventions, intervention_reduction_rank, integer(1L)))
+  ]
+  n_interventions <- length(sorted_interventions)
+  gradient_palette <- grDevices::colorRampPalette(c("#FFB347", "#F4A6A6"))(n_interventions)
+  names(gradient_palette) <- sorted_interventions
+
+  c(fill_colours, gradient_palette[interventions])
+}
+
 plot_cumulative_risk_panel <- function(
     df,
     panel_title,
@@ -396,41 +427,41 @@ plot_cumulative_risk_panel <- function(
     label_fn,
     legend_levels,
     legend_nrow = 1L,
-    series_colours_map = series_colours,
-    series_linetypes_map = series_linetypes,
-    series_linewidths_map = series_linewidths) {
+    series_fill_map = build_intervention_fill_colours(legend_levels)) {
+  n_series <- length(legend_levels)
+  dodge_width <- 0.98
+  bar_width <- 2.0 / n_series
+
   ggplot2::ggplot(
     df,
     ggplot2::aes(
       x = .data$follow_up_week,
       y = .data$cumulative_risk,
-      colour = .data$series,
-      linetype = .data$series,
-      linewidth = .data$series
+      fill = .data$series
     )
   ) +
-    ggplot2::geom_line() +
+    ggplot2::geom_col(
+      width = bar_width,
+      colour = "white",
+      linewidth = 0.25,
+      position = ggplot2::position_dodge2(width = dodge_width, padding = 0)
+    ) +
     ggplot2::scale_x_continuous(
       breaks = follow_up_weeks,
-      limits = range(follow_up_weeks)
+      limits = c(
+        min(follow_up_weeks) - dodge_width / 2,
+        max(follow_up_weeks) + dodge_width / 2
+      ),
+      expand = c(0, 0)
     ) +
     ggplot2::scale_y_continuous(
       limits = c(0, y_upper),
       breaks = y_breaks,
-      labels = label_fn
+      labels = label_fn,
+      expand = ggplot2::expansion(mult = c(0, 0.02))
     ) +
-    ggplot2::scale_colour_manual(
-      values = series_colours_map,
-      breaks = legend_levels,
-      drop = FALSE
-    ) +
-    ggplot2::scale_linetype_manual(
-      values = series_linetypes_map,
-      breaks = legend_levels,
-      drop = FALSE
-    ) +
-    ggplot2::scale_linewidth_manual(
-      values = series_linewidths_map,
+    ggplot2::scale_fill_manual(
+      values = series_fill_map,
       breaks = legend_levels,
       drop = FALSE
     ) +
@@ -438,9 +469,7 @@ plot_cumulative_risk_panel <- function(
       title = panel_title,
       x = "Gestational Weeks",
       y = y_label,
-      colour = NULL,
-      linetype = NULL,
-      linewidth = NULL
+      fill = NULL
     ) +
     gform_panel_theme() +
     ggplot2::theme(
@@ -450,16 +479,11 @@ plot_cumulative_risk_panel <- function(
       plot.margin = ggplot2::margin(4, 4, 4, 4)
     ) +
     ggplot2::guides(
-      colour = ggplot2::guide_legend(
+      fill = ggplot2::guide_legend(
         order = 1,
         nrow = legend_nrow,
-        override.aes = list(
-          linetype = series_linetypes_map[legend_levels],
-          linewidth = series_linewidths_map[legend_levels]
-        )
-      ),
-      linetype = "none",
-      linewidth = "none"
+        override.aes = list(colour = "white", linewidth = 0.25)
+      )
     )
 }
 
@@ -499,21 +523,7 @@ build_cumulative_risk_figure <- function(metric_cfg) {
       metric_cfg$label_fn,
       metric_cfg$legend_levels,
       legend_nrow = if (is.null(metric_cfg$legend_nrow)) 1L else metric_cfg$legend_nrow,
-    series_colours_map = if (!is.null(metric_cfg$series_colours)) {
-      metric_cfg$series_colours
-    } else {
-      series_colours
-    },
-    series_linetypes_map = if (!is.null(metric_cfg$series_linetypes)) {
-      metric_cfg$series_linetypes
-    } else {
-      series_linetypes
-    },
-    series_linewidths_map = if (!is.null(metric_cfg$series_linewidths)) {
-      metric_cfg$series_linewidths
-    } else {
-      series_linewidths
-    }
+      series_fill_map = build_intervention_fill_colours(metric_cfg$legend_levels)
     )
   })
 

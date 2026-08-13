@@ -66,6 +66,17 @@ rsconnect/
 02_Output/G-Form/Models/
 02_Output/G-Form/sample1pct/
 
+02_Output/G-Form-Period/Bootstrap/
+02_Output/G-Form-Period/Heatmap/
+02_Output/G-Form-Period/Interventions/
+02_Output/G-Form-Period/Timing/
+02_Output/G-Form-Period/WeeklyEffects/
+02_Output/G-Form-Period/PopulationEffects/
+02_Output/G-Form-Period/Other/
+02_Output/G-Form-Period/Models/
+02_Output/G-Form-Period/sample1pct/
+
+
 04_Conference/
 
 # Secrets (Gmail OAuth / app passwords — never commit)

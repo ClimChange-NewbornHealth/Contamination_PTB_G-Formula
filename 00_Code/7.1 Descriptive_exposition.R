@@ -101,6 +101,21 @@ tab_idw <- summarise_exposure(
   "IDW"
 )
 
+ptb_mun <- rio::import(paste0(data_inp, "Data_births_ptb_mun.xlsx")) |>
+  transmute(
+    `Zip code` = com,
+    `% PTB` = formatC(round(ptb * 100, 2), format = "f", digits = 2, decimal.mark = ".")
+  )
+
+add_ptb_column <- function(tab) {
+  tab |>
+    left_join(ptb_mun, by = "Zip code") |>
+    relocate(`% PTB`, .after = Zip)
+}
+
+tab_krg <- add_ptb_column(tab_krg)
+tab_idw <- add_ptb_column(tab_idw)
+
 ## Paper tab 
 tab_publication <- tab_krg |>
   bind_rows(tab_idw) |> 

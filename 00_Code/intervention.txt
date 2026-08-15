@@ -20,3 +20,5 @@ Natural Course
 O3 < 10%
 O3 < 20%
 O3 < 30%
+
+Multicontaminat: only reducctions by 20%

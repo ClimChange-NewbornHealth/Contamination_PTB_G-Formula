@@ -495,7 +495,35 @@ build_summary_table <- function() {
   as.data.frame(table_matrix, stringsAsFactors = FALSE)
 }
 
-write_summary_workbook <- function(table_df, path_output) {
+build_table_notes <- function() {
+  data.frame(
+    Item = c(
+      "Model",
+      "Interventions",
+      "Co-pollutant adjustment",
+      "Follow-up week (population)",
+      "Metrics scale",
+      "Bootstrap",
+      "Generated"
+    ),
+    Description = c(
+      paste0(
+        "G-Formula multicontaminante (14.2): Cox semanal con exposición principal + ",
+        "lag ponderado DLM + TAD + covariables; ajuste por exposición semanal ",
+        "concurrente de los otros dos contaminantes."
+      ),
+      "Reducción relativa del 20% (pct20) en PM2.5, NO2 y O3 (tres corridas separadas).",
+      "En cada semana w, el modelo incluye la exposición observada de los co-contaminantes en w.",
+      "Semana gestacional 36 (GFORM_DEFAULTS$population_week).",
+      "Prevalencia, RD, AR y PAF en % (×100); casos en conteo; RR sin escalar.",
+      "IC 95% de PAF desde réplicas bootstrap paramétricas (population_boot.csv) si existen.",
+      format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z")
+    ),
+    stringsAsFactors = FALSE
+  )
+}
+
+write_summary_workbook <- function(table_df, path_output, notes_df = build_table_notes()) {
   n_cols <- ncol(table_df)
   wb <- openxlsx::createWorkbook()
   openxlsx::addWorksheet(wb, "Table")
@@ -567,6 +595,24 @@ write_summary_workbook <- function(table_df, path_output) {
     sheet = "Table",
     cols = seq_len(n_cols),
     widths = c(28, rep(24, n_cols - 1L))
+  )
+
+  openxlsx::addWorksheet(wb, "Notes")
+  openxlsx::writeData(
+    wb,
+    sheet = "Notes",
+    x = notes_df,
+    startRow = 1,
+    colNames = TRUE
+  )
+  openxlsx::setColWidths(wb, sheet = "Notes", cols = 1:2, widths = c(28, 80))
+  openxlsx::addStyle(
+    wb,
+    sheet = "Notes",
+    style = openxlsx::createStyle(wrapText = TRUE, valign = "top"),
+    rows = 2:(nrow(notes_df) + 1L),
+    cols = 1:2,
+    gridExpand = TRUE
   )
 
   dir.create(dirname(path_output), recursive = TRUE, showWarnings = FALSE)

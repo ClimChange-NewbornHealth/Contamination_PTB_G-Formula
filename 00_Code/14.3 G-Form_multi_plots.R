@@ -109,7 +109,17 @@ metric_configs <- list(
 )
 
 follow_up_weeks <- 28:36
+plot_follow_up_weeks <- 29:36
+cumulative_x_breaks <- 28:36
+cumulative_bar_weeks <- 29:36
+cumulative_x_limits <- c(27.5, 36.5)
+cumulative_dodge_width <- 0.80
+cumulative_bar_width <- cumulative_dodge_width / 2
 intervention_week_range <- c(0L, 44L)
+multi_figure_caption <- paste0(
+  "Multicontaminant G-Formula (pct20): weekly Cox models adjust for concurrent ",
+  "co-pollutant exposure at week w."
+)
 fig_dpi <- 300
 axis_title_size <- 9
 fig_width_3col <- 30
@@ -214,7 +224,7 @@ load_curves_stub <- function(stub) {
   }
 
   curves <- readxl::read_excel(excel_path, sheet = sheet_curves) |>
-    dplyr::filter(.data$follow_up_week %in% follow_up_weeks)
+    dplyr::filter(.data$follow_up_week %in% cumulative_bar_weeks)
 
   if (!nrow(curves)) {
     warning("Curvas vacías en ", excel_path)
@@ -353,9 +363,6 @@ plot_cumulative_risk_panel <- function(
     legend_levels,
     legend_nrow = 1L,
     series_fill_map = build_intervention_fill_colours(legend_levels)) {
-  n_series <- length(legend_levels)
-  dodge_width <- 0.98
-  bar_width <- 2.0 / n_series
 
   ggplot2::ggplot(
     df,
@@ -366,17 +373,16 @@ plot_cumulative_risk_panel <- function(
     )
   ) +
     ggplot2::geom_col(
-      width = bar_width,
-      colour = "white",
-      linewidth = 0.25,
-      position = ggplot2::position_dodge2(width = dodge_width, padding = 0)
+      width = cumulative_bar_width,
+      colour = NA,
+      position = ggplot2::position_dodge2(
+        width = cumulative_dodge_width,
+        padding = 0
+      )
     ) +
     ggplot2::scale_x_continuous(
-      breaks = follow_up_weeks,
-      limits = c(
-        min(follow_up_weeks) - dodge_width / 2,
-        max(follow_up_weeks) + dodge_width / 2
-      ),
+      breaks = cumulative_x_breaks,
+      limits = cumulative_x_limits,
       expand = c(0, 0)
     ) +
     ggplot2::scale_y_continuous(
@@ -407,7 +413,7 @@ plot_cumulative_risk_panel <- function(
       fill = ggplot2::guide_legend(
         order = 1,
         nrow = legend_nrow,
-        override.aes = list(colour = "white", linewidth = 0.25)
+        override.aes = list(colour = NA)
       )
     )
 }
@@ -455,21 +461,30 @@ build_cumulative_risk_figure <- function(metric_cfg) {
   fig_width <- if (length(pollutants) == 2L) fig_width_2col else fig_width_3col
   panel_widths <- rep(1, length(pollutants))
 
-  list(
-    plot = do.call(
-      ggpubr::ggarrange,
-      c(
-        panel_plots,
-        list(
-          ncol = length(pollutants),
-          nrow = 1,
-          widths = panel_widths,
-          align = "hv",
-          common.legend = TRUE,
-          legend = "top"
-        )
+  combined <- do.call(
+    ggpubr::ggarrange,
+    c(
+      panel_plots,
+      list(
+        ncol = length(pollutants),
+        nrow = 1,
+        widths = panel_widths,
+        align = "hv",
+        common.legend = TRUE,
+        legend = "top"
       )
-    ),
+    )
+  )
+  combined <- ggpubr::annotate_figure(
+    combined,
+    bottom = grid::textGrob(
+      multi_figure_caption,
+      gp = grid::gpar(fontsize = 8, col = "grey30")
+    )
+  )
+
+  list(
+    plot = combined,
     width = fig_width
   )
 }
@@ -802,20 +817,29 @@ build_heatmap_grid <- function(metric_cfg) {
   panel_widths <- rep(1, length(pollutants))
   fig_height_hm <- heatmap_row_height * length(row_ids)
 
-  list(
-    plot = do.call(
-      ggpubr::ggarrange,
-      c(
-        plots,
-        list(
-          ncol = length(pollutants),
-          nrow = length(row_ids),
-          widths = panel_widths,
-          align = "hv",
-          common.legend = FALSE
-        )
+  combined <- do.call(
+    ggpubr::ggarrange,
+    c(
+      plots,
+      list(
+        ncol = length(pollutants),
+        nrow = length(row_ids),
+        widths = panel_widths,
+        align = "hv",
+        common.legend = FALSE
       )
-    ),
+    )
+  )
+  combined <- ggpubr::annotate_figure(
+    combined,
+    bottom = grid::textGrob(
+      multi_figure_caption,
+      gp = grid::gpar(fontsize = 8, col = "grey30")
+    )
+  )
+
+  list(
+    plot = combined,
     width = fig_width,
     height = fig_height_hm
   )

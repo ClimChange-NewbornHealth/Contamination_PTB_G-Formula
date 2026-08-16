@@ -76,6 +76,15 @@ rsconnect/
 02_Output/G-Form-Period/Models/
 02_Output/G-Form-Period/sample1pct/
 
+02_Output/G-Form-Multi/Bootstrap/
+02_Output/G-Form-Multi/Heatmap/
+02_Output/G-Form-Multi/Interventions/
+02_Output/G-Form-Multi/Timing/
+02_Output/G-Form-Multi/WeeklyEffects/
+02_Output/G-Form-Multi/PopulationEffects/
+02_Output/G-Form-Multi/Other/
+02_Output/G-Form-Multi/Models/
+02_Output/G-Form-Multi/sample1pct/
 
 04_Conference/
 
@@ -85,3 +94,4 @@ servidor.txt
 *.sh
 *.docx
 *.json
+*.log

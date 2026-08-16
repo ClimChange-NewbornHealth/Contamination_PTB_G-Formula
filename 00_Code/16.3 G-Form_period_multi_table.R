@@ -275,7 +275,7 @@ format_table_row <- function(scenario_label, pop_row, time_intervention = "") {
 }
 
 scenario_excel_path <- function(stub) {
-  file.path(dir_summary, paste0(stub, "_point_estimates.xlsx")
+  file.path(dir_summary, paste0(stub, "_point_estimates.xlsx"))
 }
 
 period_multi_stub_candidates <- function(base_stub) {

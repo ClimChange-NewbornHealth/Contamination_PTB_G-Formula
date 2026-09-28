@@ -625,3 +625,533 @@ ggsave(
 )
 
 
+## Map with exposures ----
+
+com_codes_rm <- chilemapas::codigos_territoriales |>
+  dplyr::filter(codigo_region == 13) |>
+  dplyr::mutate(codigo_comuna = as.numeric(codigo_comuna))
+
+com_suburb <- c(
+  unique(com_codes_rm$codigo_comuna[com_codes_rm$nombre_provincia == "Santiago"]),
+  13201L
+)
+
+exposure_urb <- exposure |>
+  dplyr::filter(com %in% com_suburb)
+
+map_pollutant_palettes <- list(
+  "PM2.5" = c("#00E400", "#FFFF00", "#FF7E00", "#FF0000", "#8F3F97", "#7E0023"),
+  "NO2" = c("#7D8C96", "#9E8B7E", "#8D6E63", "#6D4C41", "#4E342E", "#1B120F"),
+  "O3" = c("#FFFFE5", "#FFF9C4", "#FFEB3B", "#FFD54F", "#FFB300", "#F57C00")
+)
+
+map_pollutant_specs <- list(
+  list(
+    label = "PM2.5",
+    krg_col = "pm25_ok_pred",
+    idw_col = "pm25_idw_pred",
+    legend_title = expression("PM"[2.5] * " mean (" * mu * "g/m"^3 * ")"),
+    xlab = expression("PM"[2.5] * " daily concentration (" * mu * "g/" * m^3 * ")")
+  ),
+  list(
+    label = "NO2",
+    krg_col = "no2_ok_pred",
+    idw_col = "no2_idw_pred",
+    legend_title = expression("NO"[2] * " mean (ppbv)"),
+    xlab = expression("NO"[2] * " daily concentration (ppbv)")
+  ),
+  list(
+    label = "O3",
+    krg_col = "o3_ok_pred",
+    idw_col = "o3_idw_pred",
+    legend_title = expression("O"[3] * " mean (ppbv)"),
+    xlab = expression("O"[3] * " daily concentration (ppbv)")
+  )
+)
+
+exposure_reduction_factor <- 0.80
+
+map_fill_alpha <- 0.58
+exposure_target_quantile <- 0.80
+warning_icon_path <- file.path(data_out, "assets", "warning_icon.png")
+
+warning_icon_is_valid <- function(path) {
+  if (!file.exists(path)) {
+    return(FALSE)
+  }
+  tryCatch({
+    png::readPNG(path)
+    TRUE
+  }, error = function(e) FALSE)
+}
+
+ensure_warning_icon_png <- function(path) {
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  if (warning_icon_is_valid(path)) {
+    return(invisible(path))
+  }
+  grDevices::png(path, width = 128, height = 128, bg = "transparent")
+  grid::grid.newpage()
+  grid::grid.polygon(
+    x = grid::unit(c(0.12, 0.88, 0.5), "npc"),
+    y = grid::unit(c(0.08, 0.08, 0.92), "npc"),
+    gp = grid::gpar(fill = "#FFCC00", col = "#1A1A1A", lwd = 3)
+  )
+  grid::grid.text(
+    "!",
+    x = grid::unit(0.5, "npc"),
+    y = grid::unit(0.46, "npc"),
+    gp = grid::gpar(fontsize = 42, fontface = "bold", col = "#1A1A1A")
+  )
+  grDevices::dev.off()
+  invisible(path)
+}
+
+add_warning_icon_layer <- function(
+    p,
+    warn_pts,
+    icon_path,
+    width = 0.042,
+    height = 0.026) {
+  if (is.null(warn_pts) || !nrow(warn_pts)) {
+    return(p)
+  }
+  coords <- sf::st_coordinates(warn_pts)
+  img <- png::readPNG(icon_path)
+  half_lon <- width / 2
+  half_lat <- height / 2
+  for (i in seq_len(nrow(coords))) {
+    p <- p + ggplot2::annotation_raster(
+      img,
+      xmin = coords[i, 1] - half_lon,
+      xmax = coords[i, 1] + half_lon,
+      ymin = coords[i, 2] - half_lat,
+      ymax = coords[i, 2] + half_lat
+    )
+  }
+  p
+}
+
+density_below_cut_label_coords <- function(values, p_cut, x_min) {
+  dens <- stats::density(values)
+  idx <- which(dens$x <= p_cut)
+  if (!length(idx)) {
+    return(list(x = (x_min + p_cut) / 2, y = max(dens$y, na.rm = TRUE) * 0.35))
+  }
+  w <- dens$y[idx]
+  x_center <- stats::weighted.mean(dens$x[idx], w)
+  y_center <- stats::weighted.mean(dens$y[idx], w) / 2
+  list(x = x_center, y = y_center)
+}
+
+build_map_sf_urb <- function(mun_means) {
+  geo <- chilemapas::mapa_comunas |>
+    dplyr::mutate(codigo_comuna = as.numeric(codigo_comuna)) |>
+    dplyr::filter(codigo_comuna %in% com_suburb) |>
+    dplyr::left_join(mun_means, by = c("codigo_comuna" = "com"))
+
+  if (!inherits(geo, "sf")) {
+    geo <- sf::st_as_sf(geo)
+  }
+  sf::st_transform(geo, 4326)
+}
+
+fetch_rm_basemap <- function(lims, zoom = 11) {
+  if (!requireNamespace("maptiles", quietly = TRUE)) {
+    warning("maptiles not available; maps will render without basemap.")
+    return(NULL)
+  }
+  bounds <- sf::st_bbox(
+    c(lims$xmin, lims$ymin, lims$xmax, lims$ymax),
+    crs = sf::st_crs(4326)
+  )
+  providers <- c(
+    "Esri.WorldGrayCanvas",
+    "OpenStreetMap",
+    "CartoDB.PositronNoLabels"
+  )
+  for (prov in providers) {
+    out <- try(
+      maptiles::get_tiles(
+        bounds,
+        provider = prov,
+        zoom = zoom,
+        crop = TRUE,
+        retina = FALSE
+      ),
+      silent = TRUE
+    )
+    if (!inherits(out, "try-error")) {
+      message("Basemap OK (", prov, ", zoom ", zoom, ").")
+      return(out)
+    }
+  }
+  warning("Basemap download failed for all providers.")
+  NULL
+}
+
+build_map_context_urb <- function(map_sf) {
+  bb <- sf::st_bbox(map_sf)
+  pad <- 0.02
+  lims <- list(
+    xmin = bb$xmin - pad,
+    xmax = bb$xmax + pad,
+    ymin = bb$ymin - pad,
+    ymax = bb$ymax + pad
+  )
+
+  comunas_lim <- chilemapas::mapa_comunas |>
+    dplyr::mutate(codigo_comuna = as.numeric(codigo_comuna)) |>
+    dplyr::filter(codigo_comuna %in% com_suburb) |>
+    sf::st_as_sf() |>
+    sf::st_transform(4326)
+
+  urb_boundary <- sf::st_union(comunas_lim) |>
+    sf::st_boundary()
+
+  list(
+    lims = lims,
+    map_base = fetch_rm_basemap(lims),
+    comunas_lim = comunas_lim,
+    urb_boundary = urb_boundary
+  )
+}
+
+pollutant_value_limits <- function(x) {
+  x <- x[is.finite(x)]
+  if (!length(x)) {
+    return(c(0, 1))
+  }
+  r_min <- min(x)
+  r_max <- max(x)
+  if (!is.finite(r_max) || r_max <= r_min) {
+    r_max <- r_min + 1
+  }
+  c(r_min, r_max)
+}
+
+legend_breaks_five <- function(x) {
+  rng <- range(x, na.rm = TRUE)
+  seq(rng[[1L]], rng[[2L]], length.out = 5)
+}
+
+legend_labels_1dec <- function(breaks) {
+  vapply(breaks, function(b) {
+    format(round(b, 1), nsmall = 1, decimal.mark = ".", trim = TRUE)
+  }, character(1))
+}
+
+guide_fill_map_exposure <- function() {
+  ggplot2::guide_colorbar(
+    barwidth = 12,
+    barheight = 0.35,
+    nbin = 5,
+    label.position = "bottom",
+    title.position = "top",
+    direction = "horizontal"
+  )
+}
+
+panel_tag_theme <- function(show_legend = TRUE) {
+  theme_light(base_size = 9) +
+    theme(
+      legend.position = if (show_legend) "top" else "none",
+      legend.title = element_text(size = 10, face = "bold"),
+      legend.text = element_text(size = 7),
+      legend.margin = margin(t = 0, b = 4),
+      plot.margin = margin(t = 8, r = 6, b = 0, l = 6),
+      panel.grid = element_blank(),
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      axis.title = element_blank(),
+      plot.title = element_blank(),
+      plot.tag = element_text(size = 11, face = "bold", hjust = 0, vjust = 1),
+      plot.tag.position = c(0.01, 0.99)
+    )
+}
+
+theme_density_panel <- function() {
+  panel_tag_theme(show_legend = FALSE) +
+    theme(
+      axis.text = element_text(size = 8),
+      axis.title = element_text(size = 9),
+      plot.margin = margin(t = 28, r = 6, b = 4, l = 6)
+    )
+}
+
+commune_warning_points <- function(map_sf, value_col, daily_values) {
+  vals <- map_sf[[value_col]]
+  thr <- stats::quantile(
+    daily_values,
+    probs = exposure_target_quantile,
+    na.rm = TRUE,
+    type = 7
+  )
+  flagged <- map_sf[!is.na(vals) & vals > thr, , drop = FALSE]
+  if (!nrow(flagged)) {
+    return(list(points = NULL, threshold = thr))
+  }
+  pts <- sf::st_point_on_surface(flagged)
+  list(points = pts, threshold = thr)
+}
+
+plot_commune_mean_map <- function(
+    map_sf,
+    value_col,
+    palette_colors,
+    legend_title,
+    map_ctx,
+    daily_values,
+    panel_tag = NULL) {
+  dat <- sf::st_make_valid(map_sf)
+  dat$map_value <- dat[[value_col]]
+  lims <- map_ctx$lims
+  fill_limits <- pollutant_value_limits(dat$map_value)
+  brks <- legend_breaks_five(dat$map_value)
+  warn <- commune_warning_points(dat, "map_value", daily_values)
+
+  layer_basemap <- function() {
+    if (!is.null(map_ctx$map_base) && requireNamespace("tidyterra", quietly = TRUE)) {
+      tidyterra::geom_spatraster_rgb(data = map_ctx$map_base, maxcell = 5e5)
+    } else {
+      ggplot2::annotate(
+        "rect", xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf, fill = "grey92"
+      )
+    }
+  }
+
+  p <- ggplot2::ggplot() +
+    layer_basemap() +
+    ggplot2::geom_sf(
+      data = map_ctx$comunas_lim,
+      fill = NA,
+      color = "gray40",
+      linewidth = 0.35,
+      inherit.aes = FALSE
+    ) +
+    ggplot2::geom_sf(
+      data = map_ctx$urb_boundary,
+      color = "gray15",
+      linewidth = 0.9,
+      inherit.aes = FALSE
+    ) +
+    ggplot2::geom_sf(
+      data = dat,
+      ggplot2::aes(fill = map_value),
+      color = "white",
+      linewidth = 0.5,
+      alpha = map_fill_alpha
+    )
+
+  p <- add_warning_icon_layer(
+    p,
+    warn_pts = warn$points,
+    icon_path = warning_icon_path,
+    width = 0.042,
+    height = 0.026
+  )
+
+  p <- p +
+    ggplot2::scale_fill_gradientn(
+      colors = palette_colors,
+      limits = fill_limits,
+      oob = scales::squish,
+      name = legend_title,
+      na.value = "gray90",
+      breaks = brks,
+      labels = legend_labels_1dec,
+      guide = guide_fill_map_exposure()
+    ) +
+    ggplot2::coord_sf(
+      crs = sf::st_crs(4326),
+      expand = FALSE,
+      xlim = c(lims$xmin, lims$xmax),
+      ylim = c(lims$ymin, lims$ymax)
+    ) +
+    ggplot2::labs(tag = panel_tag) +
+    panel_tag_theme(show_legend = TRUE)
+
+  if (requireNamespace("ggspatial", quietly = TRUE)) {
+    p <- p +
+      ggspatial::annotation_scale(location = "bl", width_hint = 0.2) +
+      ggspatial::annotation_north_arrow(
+        location = "tr",
+        height = grid::unit(0.8, "cm"),
+        width = grid::unit(0.6, "cm"),
+        style = ggspatial::north_arrow_fancy_orienteering()
+      )
+  }
+
+  p
+}
+
+plot_daily_density_panel <- function(
+    daily_values,
+    palette_colors,
+    fill_limits,
+    xlab,
+    panel_tag = NULL) {
+  dat_natural <- tibble::tibble(value = daily_values)
+  dat_natural <- dat_natural[is.finite(dat_natural$value), , drop = FALSE]
+  dat_reduced <- tibble::tibble(value = dat_natural$value * exposure_reduction_factor)
+
+  r_min <- fill_limits[1]
+  r_max <- fill_limits[2]
+  p80 <- stats::quantile(
+    dat_natural$value,
+    probs = exposure_target_quantile,
+    na.rm = TRUE,
+    type = 7
+  )
+  line_col <- palette_colors[[length(palette_colors)]]
+  label_pos <- density_below_cut_label_coords(dat_natural$value, p80, r_min)
+
+  ggplot2::ggplot() +
+    ggplot2::geom_density(
+      data = dat_natural,
+      ggplot2::aes(x = value),
+      fill = "#BDBDBD",
+      color = "#616161",
+      alpha = 0.55,
+      linewidth = 0.65
+    ) +
+    ggplot2::geom_density(
+      data = dat_reduced,
+      ggplot2::aes(x = value, fill = ggplot2::after_stat(x)),
+      color = line_col,
+      alpha = 0.62,
+      linewidth = 0.75
+    ) +
+    ggplot2::scale_fill_gradientn(
+      colors = palette_colors,
+      limits = c(r_min * exposure_reduction_factor, r_max * exposure_reduction_factor),
+      guide = "none"
+    ) +
+    ggplot2::scale_x_continuous(
+      limits = c(r_min, r_max),
+      labels = scales::label_number(decimal.mark = ".", big.mark = "")
+    ) +
+    ggplot2::annotate(
+      "text",
+      x = label_pos$x,
+      y = label_pos$y,
+      label = "\u2190 20%",
+      size = 4.2,
+      fontface = "bold",
+      hjust = 0.5,
+      vjust = 0.5
+    ) +
+    ggplot2::labs(
+      tag = panel_tag,
+      x = xlab,
+      y = "Density"
+    ) +
+    ggplot2::coord_cartesian(clip = "off") +
+    theme_density_panel()
+}
+
+build_map_exposure_panel <- function(
+    df,
+    method_tag = c("KRG", "IDW"),
+    map_ctx = NULL) {
+  method_tag <- match.arg(method_tag)
+
+  mun_means <- df |>
+    dplyr::group_by(com, name_com) |>
+    dplyr::summarise(
+      pm25_ok_pred = mean(pm25_ok_pred, na.rm = TRUE),
+      no2_ok_pred = mean(no2_ok_pred, na.rm = TRUE),
+      o3_ok_pred = mean(o3_ok_pred, na.rm = TRUE),
+      pm25_idw_pred = mean(pm25_idw_pred, na.rm = TRUE),
+      no2_idw_pred = mean(no2_idw_pred, na.rm = TRUE),
+      o3_idw_pred = mean(o3_idw_pred, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  map_sf <- build_map_sf_urb(mun_means)
+  if (is.null(map_ctx)) {
+    map_ctx <- build_map_context_urb(map_sf)
+  }
+  panel_tags <- LETTERS[1:6]
+
+  map_plots <- list()
+  density_plots <- list()
+
+  for (i in seq_along(map_pollutant_specs)) {
+    spec <- map_pollutant_specs[[i]]
+    val_col <- if (method_tag == "KRG") spec$krg_col else spec$idw_col
+    pal <- map_pollutant_palettes[[spec$label]]
+    daily_limits_poll <- pollutant_value_limits(df[[val_col]])
+
+    map_plots[[spec$label]] <- plot_commune_mean_map(
+      map_sf = map_sf,
+      value_col = val_col,
+      palette_colors = pal,
+      legend_title = spec$legend_title,
+      map_ctx = map_ctx,
+      daily_values = df[[val_col]],
+      panel_tag = panel_tags[i]
+    )
+
+    density_plots[[spec$label]] <- plot_daily_density_panel(
+      daily_values = df[[val_col]],
+      palette_colors = pal,
+      fill_limits = daily_limits_poll,
+      xlab = spec$xlab,
+      panel_tag = panel_tags[i + 3L]
+    )
+  }
+
+  row_maps <- patchwork::wrap_plots(
+    map_plots[["PM2.5"]],
+    map_plots[["NO2"]],
+    map_plots[["O3"]],
+    ncol = 3,
+    nrow = 1
+  )
+  row_density <- patchwork::wrap_plots(
+    density_plots[["PM2.5"]],
+    density_plots[["NO2"]],
+    density_plots[["O3"]],
+    ncol = 3,
+    nrow = 1
+  )
+  panel <- row_maps / row_density +
+    patchwork::plot_layout(heights = c(1.12, 0.88), guides = "keep")
+
+  out_file <- paste0(
+    data_out,
+    "Map_Exposure_daily_mean_and_density_",
+    method_tag,
+    ".png"
+  )
+
+  ggplot2::ggsave(
+    filename = out_file,
+    plot = panel,
+    width = 32,
+    height = 22,
+    units = "cm",
+    res = 300,
+    bg = "white",
+    device = ragg::agg_png
+  )
+
+  message("Map exposure panel (", method_tag, ") saved: ", out_file)
+  invisible(list(panel = panel, map_plots = map_plots, density_plots = density_plots))
+}
+
+ensure_warning_icon_png(warning_icon_path)
+
+mun_means_map <- exposure_urb |>
+  dplyr::group_by(com, name_com) |>
+  dplyr::summarise(
+    pm25_ok_pred = mean(pm25_ok_pred, na.rm = TRUE),
+    .groups = "drop"
+  )
+map_sf_urb_panel <- build_map_sf_urb(mun_means_map)
+map_ctx_urb <- build_map_context_urb(map_sf_urb_panel)
+
+map_panel_krg <- build_map_exposure_panel(exposure_urb, "KRG", map_ctx = map_ctx_urb)
+map_panel_idw <- build_map_exposure_panel(exposure_urb, "IDW", map_ctx = map_ctx_urb)
+

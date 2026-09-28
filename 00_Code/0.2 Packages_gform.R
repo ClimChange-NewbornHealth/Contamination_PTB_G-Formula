@@ -36,6 +36,7 @@ install_load <- function(packages, lib = gform_lib_path()) {
 }
 
 install_load(c(
+  #"AF",
   "knitr",
   "rio",
   "janitor",
@@ -56,5 +57,6 @@ install_load(c(
   "future.apply",
   "parallel",
   "beepr",
-  "tictoc"
+  "tictoc",
+  "ggstatsplot"
 ))
